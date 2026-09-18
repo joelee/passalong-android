@@ -1,0 +1,3 @@
+[bindings.kotlin]
+package_name = "io.github.joelee.passalong.ffi"
+cdylib_name = "passalong_ffi"

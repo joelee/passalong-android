@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+
+# Rust: build output and the generated UniFFI bindings
+rust/target/
+rust/generated/
+
+# Native libraries built by scripts/rust-android.sh
+app/src/main/jniLibs/
+
+# Secrets, keys, and signing material
+.env
+*.key
+*.jks
+*.keystore
+
+# Logs
+*.log

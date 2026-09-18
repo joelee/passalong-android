@@ -1,0 +1,11 @@
+passalong-android is a client for passalong (https://github.com/joelee/passalong)
+and links its Rust crates, passalong-core and passalong-ssh, which are
+licensed under the Apache License, Version 2.0, and include the following
+third-party material.
+
+EFF large word list
+  Copyright Electronic Frontier Foundation.
+  Source: https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt
+  Licensed under the Creative Commons Attribution 4.0 International License,
+  https://creativecommons.org/licenses/by/4.0/
+  passalong draws the six words of a store's passphrase from this list.

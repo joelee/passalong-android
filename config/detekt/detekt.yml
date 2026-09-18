@@ -1,0 +1,23 @@
+# Adjustments over detekt's defaults; Compose functions are PascalCase and
+# describe layouts, which are long by nature.
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']
+
+complexity:
+  LongMethod:
+    ignoreAnnotated: ['Composable']
+  LongParameterList:
+    ignoreAnnotated: ['Composable']
+  CyclomaticComplexMethod:
+    ignoreAnnotated: ['Composable']
+  TooManyFunctions:
+    thresholdInClasses: 15
+    thresholdInFiles: 15
+
+style:
+  MagicNumber:
+    ignoreAnnotated: ['Composable']
+    ignorePropertyDeclaration: true
+  ReturnCount:
+    max: 3

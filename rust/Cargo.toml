@@ -1,0 +1,62 @@
+[package]
+name = "passalong-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+repository = "https://github.com/joelee/passalong-android"
+description = "UniFFI bridge between the passalong Android app and the passalong Rust core"
+publish = false
+
+[lib]
+name = "passalong_ffi"
+crate-type = ["cdylib", "lib"]
+
+# `cargo run --features cli --bin uniffi-bindgen` generates the Kotlin
+# bindings with the same uniffi version the library was built with.
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+cli = ["uniffi/cli"]
+
+[lints.rust]
+# `deny`, not `forbid`: the one logcat call in `logging.rs` allows it with a
+# safety comment.
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[dependencies]
+# The core, pinned exactly: the app must behave like the CLI of that version.
+passalong-core = { version = "=0.2.0", default-features = false }
+passalong-ssh = "=0.2.0"
+
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+getrandom = "0.4"
+# Only for `russh::keys` (the `ssh-key` re-export) to generate the device's
+# identity; the same requirement as passalong-ssh so one copy is built.
+russh = { version = "0.63", default-features = false, features = ["ring"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry", "std"] }
+uniffi = { version = "0.29", features = ["tokio"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_log-sys = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros"] }
+
+# The Android libraries are release builds: a debug cdylib is over 40 MiB.
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+
+# Argon2 (encrypted stores) crawls unoptimised.
+[profile.dev.package.argon2]
+opt-level = 3
