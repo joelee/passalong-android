@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00002-passalong-server"
 execution_started_at: "2026-09-24T23:32:29Z"
-execution_updated_at: "2026-09-24T23:32:29Z"
+execution_updated_at: "2026-09-24T23:38:47Z"
 execution_completed_at: null
-current_step: "PLAN-00002-STEP-02"
+current_step: "PLAN-00002-STEP-03"
 ---
 
 # Delivery Plan 00002: Passalong Server Backend
@@ -702,7 +702,7 @@ extended in STEP-03) and the test server recipe from the hand-over notes.
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
 | PLAN-00002-STEP-01 | completed | 2026-09-24T23:32:29Z | 2026-09-24T23:32:29Z | `just check` exit 0: 42 JVM tests, 21 Rust tests, coverage 99.2 % | `attempt` describes any non-cancellation failure; `reconnect()` from `Root`; `ActionTargets.io` and `SetupController.io` for blocking work; `SetupController.start()` replaces constructor I/O |
-| PLAN-00002-STEP-02 | not-started | — | — | — | — |
+| PLAN-00002-STEP-02 | completed | 2026-09-24T23:38:47Z | 2026-09-24T23:38:47Z | `cargo test` 22 passed; `scripts/rust-android.sh` exit 0 for both ABIs; `just check` exit 0, coverage 99.2 % | git deps at `9ed0d4d`; `Denied` error kind; `describe` for `https`; docs for the pin bump |
 | PLAN-00002-STEP-03 | not-started | — | — | — | — |
 | PLAN-00002-STEP-04 | not-started | — | — | — | — |
 | PLAN-00002-STEP-05 | not-started | — | — | — | — |
@@ -715,6 +715,7 @@ extended in STEP-03) and the test server recipe from the hand-over notes.
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
 | 2026-09-24T23:32:29Z | STEP-01 | Review 00001 fixes with regression tests | `ChooseControllerTest` (failed publish, reconnect, unreadable config), `SetupControllerTest` (unwritable config, key made off the main thread) | STEP-02 |
+| 2026-09-24T23:38:47Z | STEP-02 | Bridge on the 0.3.0 git crates with `passalong-https` registered | `rust/Cargo.toml`, `rust/src/{error,store,lib}.rs`; `libpassalong_ffi.so` 7.1 MiB arm64 / 8.3 MiB x86_64 | STEP-03 |
 
 ### Deviations and blockers
 
@@ -728,12 +729,13 @@ None
 | Timestamp (UTC) | Step | Command or check | Result | Evidence |
 |---|---|---|---|---|
 | 2026-09-24T23:32:29Z | STEP-01 | `just check` | pass | 42 JVM tests, 21 Rust tests, Kover 99.2 %, `assembleDebug` |
+| 2026-09-24T23:38:47Z | STEP-02 | `cargo test`, `cargo clippy -D warnings`, `just rust`, `just check` | pass | 22 Rust tests, 42 JVM tests, Kover 99.2 % |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** REQ-01
-- **Incomplete requirements:** REQ-02 to REQ-07
+- **Completed requirements:** REQ-01, REQ-02
+- **Incomplete requirements:** REQ-03 to REQ-07
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->

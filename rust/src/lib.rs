@@ -42,8 +42,9 @@ pub fn bridge_version() -> String {
 mod tests {
     #[test]
     fn versions_are_the_pinned_ones() {
-        assert_eq!(super::core_version(), "0.2.0");
+        assert_eq!(super::core_version(), "0.3.0");
         assert_eq!(super::core_version(), passalong_ssh::VERSION);
+        assert_eq!(super::core_version(), passalong_https::VERSION);
         assert_eq!(super::bridge_version(), env!("CARGO_PKG_VERSION"));
     }
 }

@@ -82,16 +82,24 @@ The Compose screens, the Android sinks, and `FfiCore` have no JVM tests;
 they are excluded from the coverage figure and are on the backlog for
 instrumented tests against passalong's Docker SSH server.
 
-## Hacking on the core
+## The core's version
 
-The bridge pins `passalong-core` and `passalong-ssh` exactly from
-crates.io. To build against a checkout at `../passalong`, add a
-git-ignored `rust/.cargo/config.toml`:
+The bridge pins `passalong-core`, `passalong-ssh`, and `passalong-https`
+exactly. Until v0.3.0 of the client is on crates.io, they come from the
+client repository at one commit of its v0.3.0 branch (`git = …, rev = …`
+in `rust/Cargo.toml`); to move the pin, change the three `rev` values
+together and run `cargo update --manifest-path rust/Cargo.toml -p
+passalong-core -p passalong-ssh -p passalong-https`, then `just check`.
+Once published, replace the three with `version = "=0.3.0"`.
+
+To build against a checkout at `../passalong` instead, add a git-ignored
+`rust/.cargo/config.toml`:
 
 ```toml
-[patch.crates-io]
+[patch."https://github.com/joelee/passalong"]
 passalong-core = { path = "../../passalong/crates/passalong-core" }
 passalong-ssh = { path = "../../passalong/crates/passalong-ssh" }
+passalong-https = { path = "../../passalong/crates/passalong-https" }
 ```
 
 and never commit it or the `Cargo.lock` changes it causes.

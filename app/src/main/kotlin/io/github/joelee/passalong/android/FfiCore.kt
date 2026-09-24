@@ -129,6 +129,7 @@ private fun PassalongException.toCore(): CoreException {
             is PassalongException.Connect -> CoreException.Kind.CONNECT
             is PassalongException.NotFound -> CoreException.Kind.NOT_FOUND
             is PassalongException.Encryption -> CoreException.Kind.ENCRYPTION
+            is PassalongException.Denied -> CoreException.Kind.DENIED
             is PassalongException.Store -> CoreException.Kind.STORE
             is PassalongException.Io -> CoreException.Kind.IO
         }

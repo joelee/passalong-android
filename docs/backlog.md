@@ -25,6 +25,13 @@ Future work not covered by an active plan. Completed items are removed.
 - **Keyboard shortcuts** on tablets and Chromebooks: the TUI's keys as
   they are.
 
+## Housekeeping
+
+- **Take the core from crates.io again**: `rust/Cargo.toml` pins
+  `passalong-core`, `passalong-ssh`, and `passalong-https` to a commit of
+  the client's v0.3.0 branch; once v0.3.0 is published, replace the git
+  dependencies with `version = "=0.3.0"`.
+
 ## Agent suggested next steps
 
 - **Connect only when needed.** As in passalong's own backlog: `choose`

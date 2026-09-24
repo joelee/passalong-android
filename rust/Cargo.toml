@@ -30,8 +30,12 @@ missing_docs = "warn"
 
 [dependencies]
 # The core, pinned exactly: the app must behave like the CLI of that version.
-passalong-core = { version = "=0.2.0", default-features = false }
-passalong-ssh = "=0.2.0"
+# v0.3.0 is not on crates.io yet, so the three crates come from the client
+# repository at one commit of its v0.3.0 branch; switch to `version =
+# "=0.3.0"` once it is published (docs/backlog.md).
+passalong-core = { git = "https://github.com/joelee/passalong", rev = "9ed0d4defca5558c85388e73b89fc777e9c06a13", default-features = false }
+passalong-ssh = { git = "https://github.com/joelee/passalong", rev = "9ed0d4defca5558c85388e73b89fc777e9c06a13" }
+passalong-https = { git = "https://github.com/joelee/passalong", rev = "9ed0d4defca5558c85388e73b89fc777e9c06a13" }
 
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 getrandom = "0.4"

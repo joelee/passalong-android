@@ -55,6 +55,9 @@ class CoreException(val kind: Kind, message: String) : Exception(message) {
         /** The store is encrypted and this device cannot open it. */
         ENCRYPTION,
 
+        /** A passalong-server refused this device for good: its API key is wrong, expired, or revoked. */
+        DENIED,
+
         /** Any other storage problem. */
         STORE,
 
