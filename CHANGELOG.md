@@ -7,6 +7,22 @@ project uses [Semantic Versioning](https://semver.org/).
 ## Unreleased
 
 ### Added
+- A second kind of server: a workspace on a
+  [passalong-server](https://github.com/joelee/passalong-server) v0.1.0,
+  reached over HTTPS with an API key, as the passalong CLI v0.3.0 reaches
+  one. The setup screen asks the kind of server first and, for a server,
+  probes its certificate, has the pin confirmed (or the system trusted),
+  takes the API key, asks the server about the key and the workspace, and
+  has a "not encrypted" claim confirmed before anything is written
+  (PLAN-00002).
+
+### Fixed
+- Failures that were not the core's own crashed the app instead of
+  reaching the status line; the choose screen kept the previous server's
+  store after "Set up again"; file copies and config reads ran on the
+  main thread (Review 00001, PLAN-00002 STEP-01).
+
+### Added, earlier
 - The app, from scratch: a Kotlin and Jetpack Compose client over the
   passalong Rust core (`passalong-core` and `passalong-ssh` 0.2.0) through a
   UniFFI bridge, `rust/passalong-ffi` (PLAN-00001).
