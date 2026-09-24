@@ -34,6 +34,7 @@ pass `Dispatchers.Unconfined`).
 | `core_version`, `bridge_version` | The pinned core version, and this crate's |
 | `init_logging(level)` | `passalong_core::telemetry::init` with a writer that sends each record to logcat (tag `passalong`), or to standard error on other hosts. Idempotent |
 | `fetch_host_key(host, port, timeout)` | `passalong_ssh::fetch_host_key`: the server's key and fingerprint, not yet trusted |
+| `probe_server(url)` | `passalong_https::tls::presented`: the pin of the certificate a passalong-server presents, and whether the system trusts it, from a handshake that stops before any request |
 | `generate_identity(path, comment, replace)` | An ed25519 key in OpenSSH format, mode 0600, with `.pub` beside it; refuses to replace an existing key unless told |
 | `render_config(answers)` | `passalong_core::config::render`, the file `passalong init` writes |
 | `validate_config(text, home, hostname)` | `passalong_core::config::parse` under the app's environment |
@@ -62,6 +63,24 @@ rewrites it (`R`); `delete` drops the item from it. As in the CLI, only
 `ssh` stores with `serve.list_cache` on are cached, under the same
 identity string, so a cache written by the CLI for the same store and key
 would be usable.
+
+### TLS on Android
+
+`passalong-https` verifies a server's certificate in one of two ways, as
+the CLI does: against the `tls_pin` when the config has one (that public
+key and nothing else, which is how a self-signed server is reached), or
+through the operating system's trust store when it has none, using
+`rustls-platform-verifier`. On Android that crate calls into the JVM, so
+it must be handed the app's `Context` once, before the first connection.
+That is the bridge's one JNI entry point, `rust/src/android_tls.rs`
+(`NativeTls.init(context)` in Kotlin, called by `PassalongApp` at
+start), and the verifier's Kotlin half, `org.rustls:rustls-platform-verifier`,
+is on the app's classpath at exactly the version of the
+`rustls-platform-verifier-android` crate in `rust/Cargo.lock`, which
+`app/build.gradle.kts` reads. The probe `init` makes before any request
+(`probe_server`) uses the same verifier to say whether the system trusts
+the certificate. Without the initialisation, pinned servers still work
+and the probe fails; `PassalongApp` logs that once.
 
 ## The picker
 

@@ -20,11 +20,17 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.plus
 
-/** The app's process: installs the core's logging before anything else runs. */
+/**
+ * The app's process: installs the core's logging before anything else runs, then hands the
+ * TLS verifier the app's context, before any connection.
+ */
 class PassalongApp : Application() {
     override fun onCreate() {
         super.onCreate()
         FfiCore.initLogging(if (BuildConfig.DEBUG) "debug" else "info")
+        if (!NativeTls.init(this)) {
+            Log.e("passalong", "the system trust store is unavailable; only pinned servers will connect")
+        }
     }
 }
 

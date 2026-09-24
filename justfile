@@ -54,9 +54,12 @@ rust:
 install:
     {{gradle}} installDebug
 
-# Instrumented tests on the connected device or emulator
-test-android:
-    {{gradle}} connectedDebugAndroidTest
+# Instrumented tests on the connected device or emulator; `server` and `pin`
+# name a self-signed passalong-server to probe (docs/developer-guide.md)
+test-android server="" pin="":
+    {{gradle}} connectedDebugAndroidTest \
+        -Pandroid.testInstrumentationRunnerArguments.server="{{server}}" \
+        -Pandroid.testInstrumentationRunnerArguments.pin="{{pin}}"
 
 # Every mandated check: format, lint, tests, coverage, build
 check: fmt-check lint test coverage build

@@ -51,6 +51,12 @@ impl From<StoreError> for PassalongError {
     }
 }
 
+impl From<passalong_https::HttpsError> for PassalongError {
+    fn from(err: passalong_https::HttpsError) -> Self {
+        Self::from(passalong_https::store_error(err))
+    }
+}
+
 impl From<SshError> for PassalongError {
     fn from(err: SshError) -> Self {
         Self::Connect(err.to_string())

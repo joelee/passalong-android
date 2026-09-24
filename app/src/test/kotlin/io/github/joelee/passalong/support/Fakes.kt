@@ -5,6 +5,7 @@ import io.github.joelee.passalong.core.ConfigInfo
 import io.github.joelee.passalong.core.Core
 import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.core.HostKeyInfo
+import io.github.joelee.passalong.core.PresentedCertificate
 import io.github.joelee.passalong.core.SetupAnswers
 import io.github.joelee.passalong.core.StoreHandle
 import io.github.joelee.passalong.data.ClipboardSink
@@ -130,6 +131,8 @@ class FakeCore(var store: FakeStore = FakeStore()) : Core {
     var failOpen: CoreException? = null
     var hostKey: HostKeyInfo = HostKeyInfo("ssh-ed25519 AAAAtest", "SHA256:fp", "ssh-ed25519")
     var failFetch: CoreException? = null
+    var presented: PresentedCertificate = PresentedCertificate("sha256/AAAA", trusted = false)
+    var failProbe: CoreException? = null
     var failGenerate: CoreException? = null
     var failValidate: CoreException? = null
     val calls: MutableList<String> = mutableListOf()
@@ -145,6 +148,12 @@ class FakeCore(var store: FakeStore = FakeStore()) : Core {
         calls += "fetchHostKey($host, $port, $timeoutSecs)"
         failFetch?.let { throw it }
         return hostKey
+    }
+
+    override suspend fun probeServer(url: String): PresentedCertificate {
+        calls += "probeServer($url)"
+        failProbe?.let { throw it }
+        return presented
     }
 
     override fun generateIdentity(

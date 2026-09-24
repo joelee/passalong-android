@@ -41,6 +41,31 @@ pub async fn fetch_host_key(
     })
 }
 
+/// The certificate a passalong-server presents, seen with a handshake that
+/// stops before any request, so nothing, and no API key, reaches a server
+/// the user has not confirmed.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PresentedCertificate {
+    /// The pin of its public key, `sha256/<base64>`, as
+    /// `passalong-server tls fingerprint` prints it.
+    pub pin: String,
+    /// Whether the operating system's certificate authorities vouch for the
+    /// certificate and the name; on Android, through the system trust store.
+    pub trusted: bool,
+}
+
+/// Fetches the certificate the server at `url` presents, as `passalong init`
+/// does before showing its pin. Plain `http://` is refused.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn probe_server(url: String) -> Result<PresentedCertificate, PassalongError> {
+    let presented = passalong_https::tls::presented(url.trim()).await?;
+    tracing::info!(trusted = presented.trusted, "server certificate probed");
+    Ok(PresentedCertificate {
+        pin: presented.pin.to_string(),
+        trusted: presented.trusted,
+    })
+}
+
 /// The values the setup screen collects, as `passalong init` asks them.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SetupAnswers {
@@ -311,6 +336,20 @@ mod tests {
             matches!(&err, PassalongError::Io(m) if m.contains("cannot create")),
             "{err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn probing_a_server_that_is_not_there_is_a_connect_error() {
+        // Port 1 on localhost: refused at once, no certificate.
+        let err = probe_server("https://127.0.0.1:1".into())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, PassalongError::Connect(m) if m.contains("cannot reach https://127.0.0.1:1")),
+            "{err:?}"
+        );
+        let err = probe_server("http://127.0.0.1:1".into()).await.unwrap_err();
+        assert!(matches!(err, PassalongError::Connect(_)), "{err:?}");
     }
 
     #[tokio::test]

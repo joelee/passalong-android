@@ -12,6 +12,12 @@ data class HostKeyInfo(
     val algorithm: String,
 )
 
+/**
+ * The certificate a passalong-server presents, seen with a handshake that stops before any
+ * request: its public key's pin, `sha256/<base64>`, and whether the system trusts it.
+ */
+data class PresentedCertificate(val pin: String, val trusted: Boolean)
+
 /** The values the setup screen collects, as `passalong init` asks them. */
 data class SetupAnswers(
     val deviceName: String,
@@ -80,6 +86,9 @@ interface Core {
         port: Int,
         timeoutSecs: Long,
     ): HostKeyInfo
+
+    /** Fetches the certificate the passalong-server at [url] presents, without sending a request. */
+    suspend fun probeServer(url: String): PresentedCertificate
 
     /**
      * Writes an ed25519 identity to [path] and `<path>.pub`, and returns the public key line. An

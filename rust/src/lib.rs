@@ -9,6 +9,8 @@
 
 uniffi::setup_scaffolding!();
 
+#[cfg(target_os = "android")]
+mod android_tls;
 mod env;
 mod error;
 mod logging;
@@ -21,8 +23,8 @@ pub use error::PassalongError;
 pub use logging::init_logging;
 pub use model::{Item, kind_label};
 pub use setup::{
-    ConfigSummary, HostKey, SetupAnswers, fetch_host_key, generate_identity, render_config,
-    validate_config,
+    ConfigSummary, HostKey, PresentedCertificate, SetupAnswers, fetch_host_key, generate_identity,
+    probe_server, render_config, validate_config,
 };
 pub use store::{CachedItems, PassalongStore, open_store};
 

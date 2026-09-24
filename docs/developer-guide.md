@@ -53,7 +53,7 @@ docs/                 user and developer documentation; ideas, plans, reviews co
 | `just build` | `assembleDebug`, which runs `scripts/rust-android.sh` first |
 | `just rust` | the Rust library and bindings alone |
 | `just install` | the debug APK onto a connected device or emulator |
-| `just test-android` | instrumented tests on a connected device (none yet) |
+| `just test-android` | instrumented tests on a connected device or emulator: TLS through the device's trust store; with a test server, `just test-android https://10.0.2.2:8443 sha256/...` also probes it |
 | `just check` | fmt-check, lint, test, coverage, build |
 
 `.pre-commit-config.yaml` runs `just check` before every commit once
@@ -104,10 +104,45 @@ passalong-https = { path = "../../passalong/crates/passalong-https" }
 
 and never commit it or the `Cargo.lock` changes it causes.
 
+## The emulator
+
+```sh
+export ANDROID_HOME=$HOME/Android/Sdk
+export PATH=$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator
+sdkmanager --install emulator "system-images;android-36;google_apis;x86_64"
+avdmanager create avd -n passalong -k "system-images;android-36;google_apis;x86_64" -d pixel_7
+emulator -avd passalong &          # add -no-window for a headless one
+adb wait-for-device && just install
+```
+
+`avdmanager` may put the AVD under `$XDG_CONFIG_HOME/.android/avd`; when
+`emulator` then says it is unknown, point it there with
+`ANDROID_AVD_HOME`. From the emulator, this machine is `10.0.2.2`.
+
 ## Running it
 
 `just install` puts the debug APK on the device `adb` sees. Point the
 setup screen at passalong's Docker SSH server
 ([docs/docker-ssh-server-setup.md](https://github.com/joelee/passalong/blob/main/docs/docker-ssh-server-setup.md)
-in the main repo) to try it without a real server; from the emulator the
-host machine is `10.0.2.2`. Logs: `adb logcat -s passalong`.
+in the main repo), or at a passalong-server started as below, to try it
+without a real server. Logs: `adb logcat -s passalong`.
+
+### A passalong-server to try against
+
+Build it from its repository (`cargo build --release --locked -p
+passalong-server` in a clone of
+[passalong-server](https://github.com/joelee/passalong-server)), then
+give it a home of its own, so it never touches a server you run for real:
+
+```sh
+export HOME=$(mktemp -d); unset XDG_CONFIG_HOME XDG_DATA_HOME
+P=/path/to/passalong-server
+$P init
+$P tls self-signed --host localhost --ip 127.0.0.1 --ip 10.0.2.2   # prints the pin
+$P workspace create home
+$P key create --workspace home --label phone                     # prints the key, once
+$P serve                                                         # https://<this machine>:8443
+```
+
+In the app, the server is `https://10.0.2.2:8443` from the emulator, or
+this machine's LAN address from a phone; paste the pin and the key.

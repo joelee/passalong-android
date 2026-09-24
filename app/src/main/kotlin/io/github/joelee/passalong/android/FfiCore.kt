@@ -5,6 +5,7 @@ import io.github.joelee.passalong.core.ConfigInfo
 import io.github.joelee.passalong.core.Core
 import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.core.HostKeyInfo
+import io.github.joelee.passalong.core.PresentedCertificate
 import io.github.joelee.passalong.core.SetupAnswers
 import io.github.joelee.passalong.core.StoreHandle
 import io.github.joelee.passalong.domain.Item
@@ -17,6 +18,7 @@ import io.github.joelee.passalong.ffi.fetchHostKey as ffiFetchHostKey
 import io.github.joelee.passalong.ffi.generateIdentity as ffiGenerateIdentity
 import io.github.joelee.passalong.ffi.initLogging as ffiInitLogging
 import io.github.joelee.passalong.ffi.openStore as ffiOpenStore
+import io.github.joelee.passalong.ffi.probeServer as ffiProbeServer
 import io.github.joelee.passalong.ffi.renderConfig as ffiRenderConfig
 import io.github.joelee.passalong.ffi.validateConfig as ffiValidateConfig
 
@@ -35,6 +37,12 @@ class FfiCore : Core {
         bridged {
             val found = ffiFetchHostKey(host, port.toUShort(), timeoutSecs.toULong())
             HostKeyInfo(found.opensshLine, found.fingerprint, found.algorithm)
+        }
+
+    override suspend fun probeServer(url: String): PresentedCertificate =
+        bridged {
+            val presented = ffiProbeServer(url)
+            PresentedCertificate(presented.pin, presented.trusted)
         }
 
     override fun generateIdentity(
