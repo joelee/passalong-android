@@ -40,14 +40,12 @@ class MediaStoreDownloads(private val context: Context) : DownloadsSink {
         val uri =
             resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw IOException("cannot create $name in Downloads")
-        try {
+        // Whatever fails, no invisible pending row is left behind.
+        runCatching {
             val out = resolver.openOutputStream(uri) ?: throw IOException("cannot write $name in Downloads")
             out.use { sink -> File(path).inputStream().use { it.copyTo(sink) } }
             resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
-        } catch (err: IOException) {
-            resolver.delete(uri, null, null)
-            throw err
-        }
+        }.onFailure { resolver.delete(uri, null, null) }.getOrThrow()
         return displayName(uri) ?: name
     }
 

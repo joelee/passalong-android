@@ -21,7 +21,11 @@ passalong-core, passalong-ssh (crates.io =0.2.0) → SSH/SFTP server
 The app never reimplements store logic. Every call that reads or changes
 the store is a Kotlin `suspend` function backed by an async Rust function
 (`#[uniffi::export(async_runtime = "tokio")]`), so nothing blocks the main
-thread and the bridge needs no threads of its own beyond tokio's.
+thread and the bridge needs no threads of its own beyond tokio's. The
+few blocking calls the app makes itself, reading the config and the list
+cache, making a key, copying a download into MediaStore, run on
+`Dispatchers.IO` (`ActionTargets.io`, `SetupController.io`; the tests
+pass `Dispatchers.Unconfined`).
 
 ## The bridge surface (`rust/src`)
 
@@ -87,8 +91,13 @@ since the actions need the store), shows a fresh cache with its age or
 `Deleting <id>...`, deletes, reads the list again with `Reloading...`, and
 says `deleted <id>`; `Reload` shows the cache while it is fresh, otherwise
 reads with reuse; `ReloadServer` reads everything. Failures land in the
-status line (`cannot delete <id>: ...`) and the list stays open. Events
-are ignored while the store is busy, as keys wait in the TUI.
+status line (`cannot delete <id>: ...`) and the list stays open; so do
+failures that are not the core's, such as Downloads refusing a file
+(`attempt` in `ChooseController` describes any exception but a
+cancellation), and a view model's scope carries a
+`CoroutineExceptionHandler` as the last line, so nothing ends the
+process. Events are dropped while the store is busy, as keys wait in the
+TUI: a touch during a load does nothing.
 
 Two things differ because a phone has no terminal. `Load` and `Cat` do
 not close the list: loading reports in a snackbar, and the content opens
@@ -109,7 +118,10 @@ host key, and shows the fingerprint with the same words as the CLI. Only
 confirming renders the config, validates it back, and writes it; declining
 writes nothing. The choose screen then connects, which is `init`'s
 connection test; a failure shows the core's message with *Try again* and
-*Set up again*.
+*Set up again*. A setup that completes from *Set up again* makes the
+retained choose controller `reconnect()`: it forgets the store, the list,
+the filter, and any open view, and connects to whatever the config now
+names, so nothing of the previous server is shown or acted on.
 
 ## Build pipeline
 

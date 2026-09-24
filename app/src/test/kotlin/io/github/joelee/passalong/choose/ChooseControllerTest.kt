@@ -10,6 +10,7 @@ import io.github.joelee.passalong.support.FakeCore
 import io.github.joelee.passalong.support.FakeDownloads
 import io.github.joelee.passalong.support.FakeStore
 import io.github.joelee.passalong.support.Samples
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -23,6 +24,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
 import java.time.ZoneOffset
 
 /** Mirrors the TUI's `run_picker` tests: the statuses each step shows. */
@@ -49,7 +51,7 @@ class ChooseControllerTest {
         files = AppFiles(temp.newFolder())
         store.downloadDir = files.home.resolve("Downloads")
         if (withConfig) files.writeConfig("[server]\nkind = \"ssh\"\n")
-        val targets = ActionTargets(clipboard, downloads)
+        val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined)
         store.onCall = { statuses += current.state.value.picker.status }
         current = ChooseController(this, core, files, "pixel", targets, ZoneOffset.UTC)
         backgroundScope.launch { current.state.toList(mutableListOf()) }
@@ -242,5 +244,67 @@ class ChooseControllerTest {
             assertFalse(controller.state.value.busy)
             controller.on(PickerEvent.Help)
             assertEquals(Mode.Help, controller.state.value.picker.mode)
+        }
+
+    @Test
+    fun `a failed publish is shown in the status line and the list stays open`() =
+        runUnconfined {
+            val file = Samples.file("report.pdf", 3, secondsAfterT0 = 10)
+            store.items += file
+            val controller = controller()
+            downloads.fail = IOException("cannot create report.pdf in Downloads")
+            controller.on(PickerEvent.Select(0))
+            controller.on(PickerEvent.Load)
+            assertEquals(
+                "cannot load ${file.id}: cannot create report.pdf in Downloads",
+                controller.state.value.picker.status,
+            )
+            assertNull(controller.state.value.message)
+            assertFalse(controller.state.value.busy)
+            assertEquals(3, controller.state.value.picker.total)
+            // A failure that is not the core's in any other action lands there too.
+            store.failMeta = IllegalStateException("boom")
+            controller.on(PickerEvent.Details)
+            assertEquals("cannot read ${file.id}: boom", controller.state.value.picker.status)
+            store.failMeta = null
+            store.failList = IOException("disk")
+            controller.on(PickerEvent.ReloadServer)
+            assertEquals("cannot reload: disk", controller.state.value.picker.status)
+            assertFalse(controller.state.value.busy)
+        }
+
+    @Test
+    fun `reconnecting after setup shows the new server and forgets the old list`() =
+        runUnconfined {
+            val controller = controller()
+            controller.on(PickerEvent.StartFilter)
+            controller.on(PickerEvent.FilterChanged("new"))
+            assertEquals(1, controller.state.value.picker.visible.size)
+            val other = FakeStore(Samples.texts("one", "two", "three"))
+            other.downloadDir = files.home.resolve("Downloads")
+            core.store = other
+            files.writeConfig("[server]\nkind = \"https\"\n")
+            controller.reconnect()
+            assertEquals(Connection.Ready(other.description), controller.state.value.connection)
+            assertEquals(3, controller.state.value.picker.total)
+            assertEquals("the filter is cleared", "", controller.state.value.picker.filter)
+            assertNull(controller.state.value.viewer)
+            assertFalse(controller.state.value.busy)
+            assertEquals(listOf("cached", "list(true)"), other.calls)
+        }
+
+    @Test
+    fun `a config that cannot be read is reported, not thrown`() =
+        runUnconfined {
+            files = AppFiles(temp.newFolder())
+            files.writeConfig("[server]\nkind = \"ssh\"\n")
+            assertTrue("cannot run as root: the test needs an unreadable file", files.config.setReadable(false))
+            val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined)
+            current = ChooseController(this, core, files, "pixel", targets, ZoneOffset.UTC)
+            current.connect()
+            val failed = current.state.value.connection as Connection.Failed
+            assertEquals(CoreException.Kind.IO, failed.kind)
+            assertTrue(failed.message, failed.message.contains("config.toml"))
+            assertFalse(current.state.value.busy)
         }
 }

@@ -33,14 +33,14 @@ confidence: medium                # high | medium | low
 
 # Builder-maintained front matter. Builder may update only these keys after
 # explicit user approval; Delivery Planner initializes them.
-implementation_status: not-started # not-started | in-progress | blocked | completed | abandoned
-builder_agent: null
-builder_model: null
+implementation_status: in-progress # not-started | in-progress | blocked | completed | abandoned
+builder_agent: "Claude Code"
+builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00002-passalong-server"
-execution_started_at: null
-execution_updated_at: null
+execution_started_at: "2026-09-24T23:32:29Z"
+execution_updated_at: "2026-09-24T23:32:29Z"
 execution_completed_at: null
-current_step: null
+current_step: "PLAN-00002-STEP-02"
 ---
 
 # Delivery Plan 00002: Passalong Server Backend
@@ -701,7 +701,7 @@ extended in STEP-03) and the test server recipe from the hand-over notes.
 
 | Step | Status | Started (UTC) | Completed (UTC) | Evidence | Builder notes |
 |---|---|---|---|---|---|
-| PLAN-00002-STEP-01 | not-started | — | — | — | — |
+| PLAN-00002-STEP-01 | completed | 2026-09-24T23:32:29Z | 2026-09-24T23:32:29Z | `just check` exit 0: 42 JVM tests, 21 Rust tests, coverage 99.2 % | `attempt` describes any non-cancellation failure; `reconnect()` from `Root`; `ActionTargets.io` and `SetupController.io` for blocking work; `SetupController.start()` replaces constructor I/O |
 | PLAN-00002-STEP-02 | not-started | — | — | — | — |
 | PLAN-00002-STEP-03 | not-started | — | — | — | — |
 | PLAN-00002-STEP-04 | not-started | — | — | — | — |
@@ -714,6 +714,7 @@ extended in STEP-03) and the test server recipe from the hand-over notes.
 
 | Timestamp (UTC) | Step | Event | Evidence or reference | Next action |
 |---|---|---|---|---|
+| 2026-09-24T23:32:29Z | STEP-01 | Review 00001 fixes with regression tests | `ChooseControllerTest` (failed publish, reconnect, unreadable config), `SetupControllerTest` (unwritable config, key made off the main thread) | STEP-02 |
 
 ### Deviations and blockers
 
@@ -726,12 +727,13 @@ None
 
 | Timestamp (UTC) | Step | Command or check | Result | Evidence |
 |---|---|---|---|---|
+| 2026-09-24T23:32:29Z | STEP-01 | `just check` | pass | 42 JVM tests, 21 Rust tests, Kover 99.2 %, `assembleDebug` |
 
 ### Completion summary
 
-- **Implementation status:** `not-started`
-- **Completed requirements:** None
-- **Incomplete requirements:** All
+- **Implementation status:** `in-progress`
+- **Completed requirements:** REQ-01
+- **Incomplete requirements:** REQ-02 to REQ-07
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->

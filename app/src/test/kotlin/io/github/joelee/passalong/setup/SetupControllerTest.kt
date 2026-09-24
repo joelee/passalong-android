@@ -4,6 +4,7 @@ import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.core.HostKeyInfo
 import io.github.joelee.passalong.data.AppFiles
 import io.github.joelee.passalong.support.FakeCore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -26,7 +27,8 @@ class SetupControllerTest {
 
     private fun TestScope.controller(): SetupController {
         files = AppFiles(temp.newFolder("home"))
-        return SetupController(this, core, files, "pixel-9", hostKeyTimeoutSecs = 3)
+        return SetupController(this, core, files, "pixel-9", hostKeyTimeoutSecs = 3, io = Dispatchers.Unconfined)
+            .also { it.start() }
     }
 
     private fun runUnconfined(block: suspend TestScope.() -> Unit) =
@@ -56,7 +58,7 @@ class SetupControllerTest {
             assertEquals("ssh-ed25519 AAAAgenerated1 pixel-9", files.readPublicKey())
             assertFalse("the host is empty", state.canFetch)
             // A second controller finds the key and keeps it.
-            val again = SetupController(this, core, files, "pixel-9")
+            val again = SetupController(this, core, files, "pixel-9", io = Dispatchers.Unconfined).also { it.start() }
             assertEquals(1, core.generated)
             assertEquals(state.publicKey, again.state.value.publicKey)
             again.generateKey(replace = true)
@@ -155,6 +157,9 @@ class SetupControllerTest {
     fun `fetching waits for the server`() =
         runTest {
             val controller = controller()
+            assertTrue("the key is made off the main thread", controller.state.value.busy)
+            testScheduler.advanceUntilIdle()
+            assertFalse(controller.state.value.busy)
             controller.fillIn()
             core.hostKey = HostKeyInfo("ssh-ed25519 AAAAother", "SHA256:other", "ssh-ed25519")
             controller.fetchHostKey()
@@ -162,5 +167,20 @@ class SetupControllerTest {
             assertFalse(controller.state.value.canFetch)
             testScheduler.advanceUntilIdle()
             assertEquals("SHA256:other", controller.state.value.hostKey?.fingerprint)
+        }
+
+    @Test
+    fun `a config that cannot be written is reported and nothing is done`() =
+        runUnconfined {
+            val controller = controller()
+            controller.fillIn()
+            controller.fetchHostKey()
+            // A folder where the config file goes: the write fails.
+            files.config.mkdirs()
+            controller.fingerprintMatches(true)
+            val error = controller.state.value.error
+            assertTrue("$error", error != null && error.contains("config.toml"))
+            assertFalse(controller.state.value.done)
+            assertNull(controller.state.value.hostKey)
         }
 }

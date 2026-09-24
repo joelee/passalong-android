@@ -2,7 +2,10 @@ package io.github.joelee.passalong.data
 
 import io.github.joelee.passalong.core.StoreHandle
 import io.github.joelee.passalong.domain.Item
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.coroutines.CoroutineContext
 
 /** Where loaded text goes. */
 fun interface ClipboardSink {
@@ -32,11 +35,15 @@ sealed interface Loaded {
     data class Downloaded(val name: String) : Loaded
 }
 
-/** The actions of `passalong choose` that leave the list: `load` and `cat`. */
+/**
+ * The actions of `passalong choose` that leave the list: `load` and `cat`. Publishing a file and
+ * removing the staged copy run on [io], since they copy and delete files.
+ */
 class ItemActions(
     private val store: StoreHandle,
     private val clipboard: ClipboardSink,
     private val downloads: DownloadsSink,
+    private val io: CoroutineContext = Dispatchers.IO,
 ) {
     /**
      * As `passalong load <ID>`: text goes to the clipboard; files and clipboard images are
@@ -50,10 +57,12 @@ class ItemActions(
         }
         val path = store.download(item.id, null)
         val staged = File(path)
-        try {
-            return Loaded.Downloaded(downloads.publish(path, staged.name, item.mime))
-        } finally {
-            staged.delete()
+        return withContext(io) {
+            try {
+                Loaded.Downloaded(downloads.publish(path, staged.name, item.mime))
+            } finally {
+                staged.delete()
+            }
         }
     }
 

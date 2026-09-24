@@ -3,6 +3,7 @@ package io.github.joelee.passalong.android
 import android.app.Application
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -15,6 +16,9 @@ import io.github.joelee.passalong.data.AppFiles
 import io.github.joelee.passalong.data.ClipboardSink
 import io.github.joelee.passalong.data.DownloadsSink
 import io.github.joelee.passalong.setup.SetupController
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.plus
 
 /** The app's process: installs the core's logging before anything else runs. */
 class PassalongApp : Application() {
@@ -24,7 +28,10 @@ class PassalongApp : Application() {
     }
 }
 
-/** What the screens need, built once per process. */
+/**
+ * What the screens need. Built by the activity each time it is created, which is cheap: every
+ * field is stateless or a path, and the core's logging is installed once by [PassalongApp].
+ */
 class AppContainer(context: Context) {
     val core: Core = FfiCore()
     val files: AppFiles = AppFiles(context.filesDir)
@@ -58,11 +65,18 @@ class AppContainer(context: Context) {
     }
 }
 
+/**
+ * A failure no controller caught is logged rather than ending the process; the controllers report
+ * their own failures in their state, so this is the last line.
+ */
+private val ViewModel.guardedScope: CoroutineScope
+    get() = viewModelScope + CoroutineExceptionHandler { _, err -> Log.e("passalong", "unhandled failure", err) }
+
 /** Keeps the choose controller, and its store connection, across configuration changes. */
 class ChooseViewModel(container: AppContainer) : ViewModel() {
     val controller =
         ChooseController(
-            viewModelScope,
+            guardedScope,
             container.core,
             container.files,
             container.hostname,
@@ -72,5 +86,6 @@ class ChooseViewModel(container: AppContainer) : ViewModel() {
 
 /** Keeps the setup controller across configuration changes. */
 class SetupViewModel(container: AppContainer) : ViewModel() {
-    val controller = SetupController(viewModelScope, container.core, container.files, container.hostname)
+    val controller =
+        SetupController(guardedScope, container.core, container.files, container.hostname).also { it.start() }
 }

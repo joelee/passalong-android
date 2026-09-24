@@ -66,9 +66,10 @@ class FakeStore(items: List<Item> = emptyList()) : StoreHandle {
     val items: MutableList<Item> = items.toMutableList()
     val texts: MutableMap<String, String> = mutableMapOf()
     var cache: CachedItems? = null
-    var failList: CoreException? = null
-    var failDelete: CoreException? = null
-    var failRead: CoreException? = null
+    var failList: Exception? = null
+    var failDelete: Exception? = null
+    var failRead: Exception? = null
+    var failMeta: Exception? = null
     val calls: MutableList<String> = mutableListOf()
     override val description: String = "ssh u@h:22 /srv/passalong"
     var downloadDir: File? = null
@@ -87,6 +88,7 @@ class FakeStore(items: List<Item> = emptyList()) : StoreHandle {
 
     override suspend fun getMeta(id: String): Item {
         calls += "getMeta($id)"
+        failMeta?.let { throw it }
         return items.firstOrNull { it.id == id }
             ?: throw CoreException(CoreException.Kind.NOT_FOUND, "no item matches `$id`")
     }
@@ -211,7 +213,7 @@ class FakeClipboard : ClipboardSink {
 
 class FakeDownloads : DownloadsSink {
     val published = mutableListOf<Triple<String, String, String>>()
-    var fail: RuntimeException? = null
+    var fail: Exception? = null
 
     override fun publish(
         path: String,

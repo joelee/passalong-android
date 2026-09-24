@@ -1,15 +1,19 @@
 package io.github.joelee.passalong.setup
 
 import io.github.joelee.passalong.core.Core
-import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.core.HostKeyInfo
 import io.github.joelee.passalong.core.SetupAnswers
 import io.github.joelee.passalong.data.AppFiles
+import io.github.joelee.passalong.domain.describe
+import io.github.joelee.passalong.domain.rethrowCancellation
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
 
 /** Everything the setup screen shows; the fields default as `passalong init` defaults them. */
 data class SetupState(
@@ -53,18 +57,27 @@ class SetupController(
     private val files: AppFiles,
     private val hostname: String,
     private val hostKeyTimeoutSecs: Long = DEFAULT_TIMEOUT_SECS,
+    /** Where files are read and keys made: never the main thread. */
+    private val io: CoroutineContext = Dispatchers.IO,
 ) {
     private val _state = MutableStateFlow(SetupState(deviceName = hostname))
 
     /** What the screen shows. */
     val state: StateFlow<SetupState> = _state
 
-    init {
-        val existing = files.readPublicKey()
-        if (existing != null) {
-            _state.update { it.copy(publicKey = existing) }
-        } else {
-            generateKey(replace = false)
+    /**
+     * Finds this device's key, or makes one. Call it once to start; the screen shows the key
+     * once it is there.
+     */
+    fun start() {
+        _state.update { it.copy(busy = true) }
+        scope.launch {
+            val existing = withContext(io) { files.readPublicKey() }
+            if (existing != null) {
+                _state.update { it.copy(publicKey = existing, busy = false) }
+            } else {
+                makeKey(replace = false)
+            }
         }
     }
 
@@ -80,17 +93,15 @@ class SetupController(
 
     /** Makes this device a new identity; with [replace], even when it has one. */
     fun generateKey(replace: Boolean) {
-        try {
-            val public =
-                core.generateIdentity(
-                    files.identity.path,
-                    _state.value.deviceName.ifBlank { hostname },
-                    replace,
-                )
-            _state.update { it.copy(publicKey = public, error = null) }
-        } catch (err: CoreException) {
-            _state.update { it.copy(error = err.message) }
-        }
+        _state.update { it.copy(busy = true) }
+        scope.launch { makeKey(replace) }
+    }
+
+    private suspend fun makeKey(replace: Boolean) {
+        val comment = _state.value.deviceName.ifBlank { hostname }
+        runCatching { withContext(io) { core.generateIdentity(files.identity.path, comment, replace) } }
+            .onSuccess { public -> _state.update { it.copy(publicKey = public, error = null, busy = false) } }
+            .onFailure { err -> _state.update { it.copy(error = err.rethrowCancellation().describe(), busy = false) } }
     }
 
     /** Fetches the server's host key, to show its fingerprint. */
@@ -100,12 +111,12 @@ class SetupController(
         if (!current.canFetch) return
         _state.update { it.copy(busy = true, error = null, hostKey = null) }
         scope.launch {
-            try {
-                val found = core.fetchHostKey(current.host.trim(), port, hostKeyTimeoutSecs)
-                _state.update { it.copy(hostKey = found, busy = false) }
-            } catch (err: CoreException) {
-                _state.update { it.copy(error = err.message, busy = false) }
-            }
+            runCatching { core.fetchHostKey(current.host.trim(), port, hostKeyTimeoutSecs) }
+                .onSuccess { found -> _state.update { it.copy(hostKey = found, busy = false) } }
+                .onFailure {
+                        err ->
+                    _state.update { it.copy(error = err.rethrowCancellation().describe(), busy = false) }
+                }
         }
     }
 
@@ -130,14 +141,18 @@ class SetupController(
                 identityFile = files.identity.path,
                 remotePath = current.remotePath.trim(),
             )
-        try {
-            val text = core.renderConfig(answers)
-            // As `init` does: the file must parse back before it is written.
-            core.validateConfig(text, files.home.path, hostname)
-            files.writeConfig(text)
-            _state.update { it.copy(hostKey = null, done = true, error = null) }
-        } catch (err: CoreException) {
-            _state.update { it.copy(hostKey = null, error = err.message) }
+        _state.update { it.copy(busy = true) }
+        scope.launch {
+            runCatching {
+                val text = core.renderConfig(answers)
+                // As `init` does: the file must parse back before it is written.
+                core.validateConfig(text, files.home.path, hostname)
+                withContext(io) { files.writeConfig(text) }
+            }.onSuccess {
+                _state.update { it.copy(hostKey = null, done = true, error = null, busy = false) }
+            }.onFailure { err ->
+                _state.update { it.copy(hostKey = null, error = err.rethrowCancellation().describe(), busy = false) }
+            }
         }
     }
 
