@@ -1,10 +1,13 @@
 //! What `passalong init` does, for the app's setup screen: discover the
 //! server's host key, make this device an identity, and write the config.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use passalong_core::config::{self, InitAnswers};
+use passalong_core::api_key::{ApiKey, load_api_key, save_api_key as save_api_key_file};
+use passalong_core::config::{self, HttpsInitAnswers, InitAnswers, TlsPin};
+use passalong_core::encryption::{SystemGit, load_key_file};
+use passalong_https::api::{EncryptionState, Role};
 use russh::keys::ssh_key::rand_core::{TryCryptoRng, TryRng};
 use russh::keys::ssh_key::{Algorithm, LineEnding, PrivateKey};
 
@@ -200,6 +203,200 @@ pub fn generate_identity(
     Ok(public)
 }
 
+// ---------------------------------------------------------------------------
+// A passalong-server (`init` for `https`)
+// ---------------------------------------------------------------------------
+
+/// The values the setup screen collects for a passalong-server, as
+/// `passalong init` asks them.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HttpsSetupAnswers {
+    /// `client.device_name`.
+    pub device_name: String,
+    /// `server.https.url`.
+    pub url: String,
+    /// `server.https.tls_pin`, confirmed against the server's own; `None`
+    /// to trust the operating system's certificate authorities.
+    pub tls_pin: Option<String>,
+    /// `server.https.api_key_file`, absolute.
+    pub api_key_file: String,
+}
+
+/// Renders the complete, commented config file `passalong init` writes for
+/// a passalong-server.
+#[uniffi::export]
+pub fn render_https_config(answers: HttpsSetupAnswers) -> Result<String, PassalongError> {
+    let tls_pin = answers
+        .tls_pin
+        .as_deref()
+        .map(|pin| {
+            TlsPin::parse(pin).map_err(|err| PassalongError::Config(format!("tls_pin: {err}")))
+        })
+        .transpose()?;
+    Ok(config::render_https(&HttpsInitAnswers {
+        device_name: answers.device_name,
+        url: answers.url,
+        tls_pin,
+        api_key_file: PathBuf::from(answers.api_key_file),
+    }))
+}
+
+/// Reads a pin as the CLI does, `sha256/<base64>` or `curl`'s
+/// `sha256//<base64>`, and returns it in the first form, so pins can be
+/// compared as text.
+#[uniffi::export]
+pub fn parse_tls_pin(text: String) -> Result<String, PassalongError> {
+    TlsPin::parse(&text)
+        .map(|pin| pin.to_string())
+        .map_err(PassalongError::Config)
+}
+
+/// Checks that `text` has the shape of an API key, `pal_<id>_<secret>`,
+/// ignoring surrounding white space, and returns the key's public id. The
+/// secret is never returned or logged.
+#[uniffi::export]
+pub fn parse_api_key(text: String) -> Result<String, PassalongError> {
+    ApiKey::parse(&text)
+        .map(|key| key.id().to_owned())
+        .map_err(|err| PassalongError::Config(err.to_string()))
+}
+
+/// Whether an API key is saved at `path`.
+#[uniffi::export]
+pub fn has_api_key(path: String) -> Result<bool, PassalongError> {
+    load_api_key(Path::new(&path), &SystemGit::new())
+        .map(|key| key.is_some())
+        .map_err(|err| PassalongError::Io(err.to_string()))
+}
+
+/// Saves the API key `text` at `path`, readable by the app alone, as
+/// `passalong init` saves it beside the config.
+#[uniffi::export]
+pub fn save_api_key(path: String, text: String) -> Result<(), PassalongError> {
+    let key = ApiKey::parse(&text).map_err(|err| PassalongError::Config(err.to_string()))?;
+    save_api_key_file(Path::new(&path), &key, &SystemGit::new())
+        .map_err(|err| PassalongError::Io(err.to_string()))?;
+    tracing::info!(path = %path, "API key saved");
+    Ok(())
+}
+
+/// What a passalong-server says about itself, the API key in use, and the
+/// workspace that key opens: `getViewer` and `getWorkspace`, as `init`
+/// asks before writing anything and `check` reports.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServerInfo {
+    /// The server's version, such as `0.1.0`.
+    pub server_version: String,
+    /// The API version it speaks.
+    pub api_version: u32,
+    /// Where the server's source is, when it says.
+    pub source_url: Option<String>,
+    /// The key's public id.
+    pub key_id: String,
+    /// The key's label, such as the device's name.
+    pub key_label: Option<String>,
+    /// `read-write`, `read-only`, or `unknown`.
+    pub key_role: String,
+    /// When the key expires, seconds since the Unix epoch; `None` for never.
+    pub key_expires_at: Option<i64>,
+    /// The workspace's name.
+    pub workspace: String,
+    /// How many items it holds.
+    pub item_count: u64,
+    /// Its quota in bytes.
+    pub quota_bytes: u64,
+    /// The bytes its items take.
+    pub used_bytes: u64,
+    /// `plaintext`, `sealed`, `rewriting`, or `unknown`.
+    pub encryption_state: String,
+    /// The key id readers of a sealed workspace need.
+    pub encryption_key_id: Option<String>,
+}
+
+/// Asks the server `config_toml` names about the key and the workspace,
+/// with `api_key` as typed, or else the key saved in `api_key_file`. Nothing
+/// is written; the TLS pin, when the config has one, is checked first.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn inspect_server(
+    config_toml: String,
+    home: String,
+    hostname: String,
+    api_key: Option<String>,
+) -> Result<ServerInfo, PassalongError> {
+    let env = AppEnv::new(home, hostname);
+    let config = config::parse(&config_toml, Path::new("config.toml"), &env)?;
+    let https = config.server.https.as_ref().ok_or_else(|| {
+        PassalongError::Config("the `server.https` section is missing".to_owned())
+    })?;
+    let key = match api_key {
+        Some(text) => {
+            ApiKey::parse(&text).map_err(|err| PassalongError::Config(err.to_string()))?
+        }
+        None => load_api_key(&https.api_key_file, &SystemGit::new())
+            .map_err(|err| PassalongError::Io(err.to_string()))?
+            .ok_or_else(|| {
+                PassalongError::Config(format!(
+                    "no API key in {}: type the key the server's operator gave you",
+                    https.api_key_file.display()
+                ))
+            })?,
+    };
+    let client = passalong_https::Client::new(https, key)?;
+    let viewer = client.viewer().await?;
+    let workspace = client.workspace().await?;
+    tracing::info!(kind = "https", "server inspected");
+    Ok(ServerInfo {
+        server_version: viewer.server.version,
+        api_version: viewer.server.api_version,
+        source_url: viewer.server.source_url,
+        key_id: viewer.key.id,
+        key_label: viewer.key.label,
+        key_role: match viewer.key.role {
+            Role::ReadWrite => "read-write",
+            Role::ReadOnly => "read-only",
+            _ => "unknown",
+        }
+        .to_owned(),
+        key_expires_at: viewer
+            .key
+            .expires_at
+            .as_deref()
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| at.timestamp()),
+        workspace: workspace.name,
+        item_count: workspace.item_count,
+        quota_bytes: workspace.quota_bytes,
+        used_bytes: workspace.used_bytes,
+        encryption_state: match workspace.encryption.state {
+            EncryptionState::Plaintext => "plaintext",
+            EncryptionState::Sealed => "sealed",
+            EncryptionState::Rewriting => "rewriting",
+            _ => "unknown",
+        }
+        .to_owned(),
+        encryption_key_id: workspace.encryption.key_id,
+    })
+}
+
+/// Whether this device holds a store key (`client.key_file`), which decides
+/// whether a server's "not encrypted" claim needs the user's confirmation:
+/// a device with a key never sends plaintext, whatever the server says.
+#[uniffi::export]
+pub fn device_has_store_key(
+    config_toml: String,
+    home: String,
+    hostname: String,
+) -> Result<bool, PassalongError> {
+    let env = AppEnv::new(home, hostname);
+    let config = config::parse(&config_toml, Path::new("config.toml"), &env)?;
+    match &config.client.key_file {
+        Some(path) => load_key_file(path, &SystemGit::new())
+            .map(|key| key.is_some())
+            .map_err(|err| PassalongError::Encryption(err.to_string())),
+        None => Ok(false),
+    }
+}
+
 /// The operating system's randomness, for key generation.
 struct SysRng;
 
@@ -336,6 +533,133 @@ mod tests {
             matches!(&err, PassalongError::Io(m) if m.contains("cannot create")),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn pins_and_api_keys_are_checked_by_shape_and_pins_come_back_canonical() {
+        let pin = "sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU=";
+        assert_eq!(parse_tls_pin(pin.into()).unwrap(), pin);
+        assert_eq!(
+            parse_tls_pin(format!("  {}\n", pin.replacen("/", "//", 1))).unwrap(),
+            pin
+        );
+        for bad in [
+            "",
+            "sha256/short",
+            "md5/abc",
+            "Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU=",
+        ] {
+            assert!(
+                matches!(parse_tls_pin(bad.into()), Err(PassalongError::Config(_))),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            parse_api_key(" pal_0123abcd_s3cr3t-x\n".into()).unwrap(),
+            "0123abcd"
+        );
+        for bad in ["", "pal_", "pal_abc", "key_a_b", "pal_a_b c"] {
+            let err = parse_api_key(bad.into()).unwrap_err();
+            assert!(
+                matches!(&err, PassalongError::Config(m) if m.contains("API key")),
+                "{bad}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn api_keys_are_saved_privately_and_found_again() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("keys/api.key");
+        let shown = path.display().to_string();
+        assert!(!has_api_key(shown.clone()).unwrap());
+        let err = save_api_key(shown.clone(), "nonsense".into()).unwrap_err();
+        assert!(matches!(err, PassalongError::Config(_)), "{err:?}");
+        assert!(!path.exists());
+        save_api_key(shown.clone(), "pal_0123abcd_s3cr3t".into()).unwrap();
+        assert!(has_api_key(shown.clone()).unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            let err = has_api_key(shown).unwrap_err();
+            assert!(
+                matches!(&err, PassalongError::Io(m) if m.contains("other users")),
+                "{err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_rendered_server_config_validates_back_with_or_without_a_pin() {
+        let answers = |pin: Option<&str>| HttpsSetupAnswers {
+            device_name: "phone".into(),
+            url: "https://box.example:8443".into(),
+            tls_pin: pin.map(str::to_owned),
+            api_key_file: "/data/app/api.key".into(),
+        };
+        let pin = "sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU=";
+        let text = render_https_config(answers(Some(pin))).unwrap();
+        assert!(text.contains(&format!("tls_pin = \"{pin}\"")), "{text}");
+        let summary = validate_config(text, "/data/app".into(), "unused".into()).unwrap();
+        assert_eq!(summary.server_kind, "https");
+        assert_eq!(summary.device_name, "phone");
+        assert_eq!(summary.remote_path, "");
+        let text = render_https_config(answers(None)).unwrap();
+        assert!(text.contains("No tls_pin"), "{text}");
+        validate_config(text, "/data/app".into(), "unused".into()).unwrap();
+        let err = render_https_config(answers(Some("nonsense"))).unwrap_err();
+        assert!(
+            matches!(&err, PassalongError::Config(m) if m.starts_with("tls_pin:")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_device_without_a_store_key_says_so() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().display().to_string();
+        let text = "[server]\nkind = \"https\"\n[server.https]\nurl = \"https://box:8443\"\n";
+        assert!(!device_has_store_key(text.into(), home.clone(), "d".into()).unwrap());
+        let err = device_has_store_key("nonsense".into(), home, "d".into()).unwrap_err();
+        assert!(matches!(err, PassalongError::Config(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn inspecting_needs_a_server_section_and_a_key_before_any_connection() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().display().to_string();
+        let ssh = render_config(answers("~/k"));
+        let err = inspect_server(ssh, home.clone(), "d".into(), None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, PassalongError::Config(m) if m.contains("server.https")),
+            "{err:?}"
+        );
+        let text = "[server]\nkind = \"https\"\n[server.https]\nurl = \"https://127.0.0.1:1\"\n";
+        let err = inspect_server(text.into(), home.clone(), "d".into(), None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, PassalongError::Config(m) if m.contains("no API key in")),
+            "{err:?}"
+        );
+        let err = inspect_server(text.into(), home.clone(), "d".into(), Some("bad".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PassalongError::Config(_)), "{err:?}");
+        let err = inspect_server(
+            text.into(),
+            home,
+            "d".into(),
+            Some("pal_0123abcd_s3cr3t".into()),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, PassalongError::Connect(_)), "{err:?}");
     }
 
     #[tokio::test]

@@ -50,6 +50,7 @@ docs/                 user and developer documentation; ideas, plans, reviews co
 | `just lint` | detekt and clippy (`-D warnings`) |
 | `just test` | Gradle JVM unit tests, then `cargo test` in `rust/` |
 | `just coverage` | Kover: prints the Kotlin line coverage and fails under 80 % |
+| `just test-https` | the bridge against a real passalong-server, one per test, from the binary `PASSALONG_SERVER_BIN` names |
 | `just build` | `assembleDebug`, which runs `scripts/rust-android.sh` first |
 | `just rust` | the Rust library and bindings alone |
 | `just install` | the debug APK onto a connected device or emulator |
@@ -77,6 +78,17 @@ called, as the TUI's fake screen records frames. The Rust bridge is
 tested on the host with `cargo test` over the core's `local` backend in a
 temporary folder, so no SSH server is needed; the one network test
 connects to a closed local port.
+
+`rust/tests/server.rs` runs the bridge against a real passalong-server:
+each test starts one from the binary `PASSALONG_SERVER_BIN` names, under
+a home of its own, with a self-signed certificate, a workspace, and a key
+(`rust/tests/support/mod.rs`, written from the server's documentation and
+`--help` alone, since the server is AGPL and shares no code with this
+repository). They are ignored without the variable:
+
+```sh
+PASSALONG_SERVER_BIN=../passalong-server/target/release/passalong-server just test-https
+```
 
 The Compose screens, the Android sinks, and `FfiCore` have no JVM tests;
 they are excluded from the coverage figure and are on the backlog for

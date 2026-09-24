@@ -35,6 +35,11 @@ pass `Dispatchers.Unconfined`).
 | `init_logging(level)` | `passalong_core::telemetry::init` with a writer that sends each record to logcat (tag `passalong`), or to standard error on other hosts. Idempotent |
 | `fetch_host_key(host, port, timeout)` | `passalong_ssh::fetch_host_key`: the server's key and fingerprint, not yet trusted |
 | `probe_server(url)` | `passalong_https::tls::presented`: the pin of the certificate a passalong-server presents, and whether the system trusts it, from a handshake that stops before any request |
+| `parse_tls_pin(text)`, `parse_api_key(text)` | The shape checks `init` makes before any request: a pin in either written form, canonical afterwards; an API key `pal_<id>_<secret>`, of which only the id comes back |
+| `has_api_key(path)`, `save_api_key(path, key)` | `passalong_core::api_key`: the owner-only `api.key` file, refused when others can read it |
+| `render_https_config(answers)` | `passalong_core::config::render_https`, the file `init` writes for a server |
+| `inspect_server(config, home, hostname, api_key?)` | `getViewer` and `getWorkspace` through `passalong_https::Client`, with the typed key or the saved one: server version, key label, role, and expiry, workspace name, items, quota, and encryption state. Nothing is written |
+| `device_has_store_key(config, home, hostname)` | Whether `client.key_file` holds a store key, which decides whether a "not encrypted" claim needs the user's confirmation |
 | `generate_identity(path, comment, replace)` | An ed25519 key in OpenSSH format, mode 0600, with `.pub` beside it; refuses to replace an existing key unless told |
 | `render_config(answers)` | `passalong_core::config::render`, the file `passalong init` writes |
 | `validate_config(text, home, hostname)` | `passalong_core::config::parse` under the app's environment |
@@ -50,6 +55,16 @@ the app's storage, and the device name defaults to what the app passes
 Errors cross the bridge as one flat enum, `PassalongError`, grouped by
 what the app can do: `Config`, `Connect`, `NotFound`, `Encryption`,
 `Store`, `Io`. Messages are the core's own, which say how to fix things.
+
+### A server
+
+`open_store` registers `passalong_https` beside `ssh` and `local`, so a
+`kind = "https"` config opens an `HttpStore` through the same
+`BackendRegistry` the CLI uses; listing, reading, verifying, and deleting
+are the core's, byte for byte as the CLI does them. The bridge adds only
+what the setup screen needs (the table above), and one error kind of its
+own, `Denied`, for a server that refuses the device for good: a wrong,
+expired, or revoked API key, which only a new key from the operator fixes.
 
 ### The list cache
 

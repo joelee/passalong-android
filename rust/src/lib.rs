@@ -23,8 +23,10 @@ pub use error::PassalongError;
 pub use logging::init_logging;
 pub use model::{Item, kind_label};
 pub use setup::{
-    ConfigSummary, HostKey, PresentedCertificate, SetupAnswers, fetch_host_key, generate_identity,
-    probe_server, render_config, validate_config,
+    ConfigSummary, HostKey, HttpsSetupAnswers, PresentedCertificate, ServerInfo, SetupAnswers,
+    device_has_store_key, fetch_host_key, generate_identity, has_api_key, inspect_server,
+    parse_api_key, parse_tls_pin, probe_server, render_config, render_https_config, save_api_key,
+    validate_config,
 };
 pub use store::{CachedItems, PassalongStore, open_store};
 
