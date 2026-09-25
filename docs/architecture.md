@@ -13,9 +13,9 @@ core.Core, core.StoreHandle                     Kotlin interfaces; tests use fak
         │
 android.FfiCore                                 the only file that imports the UniFFI bindings
         │ JNA
-rust/ passalong-ffi                             UniFFI exports; tokio; logcat
+rust/ passalong-ffi                             UniFFI exports; tokio; logcat; one JNI init for TLS
         │
-passalong-core, passalong-ssh (crates.io =0.2.0) → SSH/SFTP server
+passalong-core, -ssh, -https (v0.3.0, git)      → SSH/SFTP server, or a passalong-server over HTTPS
 ```
 
 The app never reimplements store logic. Every call that reads or changes

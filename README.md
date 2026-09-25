@@ -5,9 +5,10 @@ lightweight, cross-platform clipboard and file sharing tool. One machine
 you already own runs a plain SSH server with a storage directory; every
 other device pushes and pulls items there. No cloud service, no account.
 
-**Status:** pre-release. The first milestone is what the TUI's
-`passalong choose` does, an item picker over your store, plus the in-app
-setup that replaces `passalong init` on a phone.
+**Status:** pre-release. The app does what the TUI's `passalong choose`
+does, an item picker over your store, with the in-app setup that replaces
+`passalong init` on a phone, for an SSH server or a
+[passalong-server](https://github.com/joelee/passalong-server) workspace.
 
 ```mermaid
 flowchart LR
@@ -15,8 +16,9 @@ flowchart LR
     ctl --> core["Core, StoreHandle<br/>(Kotlin interfaces)"]
     core --> ffi["FfiCore<br/>UniFFI bindings"]
     ffi --> rust["passalong-ffi (Rust)"]
-    rust --> crates["passalong-core, passalong-ssh<br/>crates.io =0.2.0"]
+    rust --> crates["passalong-core, -ssh, -https<br/>v0.3.0"]
     crates <-- "SSH/SFTP, pinned host key" --> server[("server:/srv/passalong")]
+    crates <-- "HTTPS, pinned key or system trust, API key" --> ps[("passalong-server<br/>workspace")]
 ```
 
 The app reuses the Rust core through a UniFFI bridge, so host-key
@@ -25,10 +27,15 @@ cache, and encrypted stores behave exactly like the CLI.
 
 ## What it does
 
-- **Setup** (`passalong init`): the app makes this device an ed25519 key
-  and shows the public key to add to the server's `authorized_keys`; you
-  enter the server, it fetches the host key, and you confirm the
-  fingerprint before the key is pinned. Nothing is written until you do.
+- **Setup** (`passalong init`): first the kind of server. For **SSH**,
+  the app makes this device an ed25519 key and shows the public key to add
+  to the server's `authorized_keys`; you enter the server, it fetches the
+  host key, and you confirm the fingerprint before the key is pinned. For
+  a **passalong-server**, it reads the certificate without sending a
+  request and has you paste the operator's pin (or trust the system when
+  it vouches), takes the API key without showing it, asks the server about
+  the key and the workspace, and has a "not encrypted" claim confirmed.
+  Nothing is written until you confirm.
 - **Choose** (`passalong choose`): the stored items, newest first, from
   the list cache when it is fresh (the bottom line says `cached 30 s ago`)
   or from the server. Filter by id, name or preview, device, or kind. Tap
@@ -36,7 +43,8 @@ cache, and encrypted stores behave exactly like the CLI.
   Downloads, checked against their SHA-256 first. Long press to show the
   content, the metadata as `passalong get` prints it, or to delete after
   confirming. Reload from the cache (`r`) or the server (`R`), and `?` for
-  help, from the menu.
+  help, from the menu. With a passalong-server, an API key about to expire
+  is warned about, as `passalong check` warns.
 
 See [docs/usage.md](docs/usage.md) for the screens,
 [docs/configuration.md](docs/configuration.md) for where the app keeps

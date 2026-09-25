@@ -8,13 +8,18 @@ Future work not covered by an active plan. Completed items are removed.
   as `passalong encrypt --join` does, and keep it in `client.key_file`;
   also key import from a QR code shown by another device.
 - **Sending**: share text and files into the app (`passalong clipboard`,
-  `passalong file`), and a clipboard push.
+  `passalong file`), and a clipboard push; over a passalong-server, the
+  three-call upload with `expectedKeyId`.
+- **API key import** from a QR code or a link the operator shows, instead
+  of pasting; and a *Replace the key* action for an expired one without
+  setting up again.
 - **Clipboard images**: load a clipboard image onto the clipboard through
   a content URI instead of into Downloads.
-- **Instrumented tests** for the Compose screens, the sinks, and
-  `FfiCore`, against passalong's Docker OpenSSH server.
-- **`check` screen**: the four steps `passalong check` prints, after
-  setup.
+- **Instrumented tests for the Compose screens** (the controllers and the
+  bridge have them, `just test-android`), and for the SSH flow against
+  passalong's Docker OpenSSH server.
+- **A `check` screen**: the lines `passalong check` prints, including the
+  workspace's usage, after setup.
 
 ## Later
 
