@@ -5,7 +5,9 @@ import io.github.joelee.passalong.core.ConfigInfo
 import io.github.joelee.passalong.core.Core
 import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.core.HostKeyInfo
+import io.github.joelee.passalong.core.HttpsSetupAnswers
 import io.github.joelee.passalong.core.PresentedCertificate
+import io.github.joelee.passalong.core.ServerInfo
 import io.github.joelee.passalong.core.SetupAnswers
 import io.github.joelee.passalong.core.StoreHandle
 import io.github.joelee.passalong.data.ClipboardSink
@@ -197,8 +199,85 @@ class FakeCore(var store: FakeStore = FakeStore()) : Core {
     ): ConfigInfo {
         calls += "validateConfig"
         failValidate?.let { throw it }
+        if (configToml.contains("url = \"http://")) {
+            throw CoreException(CoreException.Kind.CONFIG, "server.https.url: plain http:// is refused")
+        }
         return ConfigInfo("d", "ssh", "h", 22, "u", "/r", "$home/keys/id_ed25519", "$home/Downloads", null)
     }
+
+    var serverInfo: ServerInfo =
+        ServerInfo(
+            serverVersion = "0.1.0",
+            apiVersion = 1,
+            sourceUrl = "https://github.com/joelee/passalong-server",
+            keyId = "0123abcd",
+            keyLabel = "phone",
+            keyRole = "read-write",
+            keyExpiresAt = null,
+            workspace = "home",
+            itemCount = 3,
+            quotaBytes = 20L shl 30,
+            usedBytes = 1536,
+            encryptionState = "plaintext",
+            encryptionKeyId = null,
+        )
+    var failInspect: CoreException? = null
+    var hasStoreKey = false
+    val savedKeys: MutableList<String> = mutableListOf()
+
+    override fun parseTlsPin(text: String): String {
+        val trimmed = text.trim().replaceFirst("sha256//", "sha256/")
+        val ok = Regex("""sha256/[A-Za-z0-9+/]{43}=""").matches(trimmed)
+        if (!ok) throw CoreException(CoreException.Kind.CONFIG, "a pin is `sha256/` and 32 bytes in base64")
+        return trimmed
+    }
+
+    override fun parseApiKey(text: String): String =
+        Regex("""pal_([A-Za-z0-9-]+)_[A-Za-z0-9_-]+""").matchEntire(text.trim())?.groupValues?.get(1)
+            ?: throw CoreException(CoreException.Kind.CONFIG, "an API key is `pal_<key id>_<secret>`")
+
+    override fun hasApiKey(path: String): Boolean = File(path).isFile
+
+    override fun saveApiKey(
+        path: String,
+        key: String,
+    ) {
+        calls += "saveApiKey"
+        File(path).parentFile?.mkdirs()
+        File(path).writeText(key + "\n")
+        savedKeys += key
+    }
+
+    override fun renderHttpsConfig(answers: HttpsSetupAnswers): String =
+        """
+        [client]
+        device_name = "${answers.deviceName}"
+
+        [server]
+        kind = "https"
+
+        [server.https]
+        url = "${answers.url}"
+        ${answers.tlsPin?.let { "tls_pin = \"$it\"" } ?: "# No tls_pin"}
+        api_key_file = "${answers.apiKeyFile}"
+        """.trimIndent() + "\n"
+
+    override suspend fun inspectServer(
+        configToml: String,
+        home: String,
+        hostname: String,
+        apiKey: String?,
+    ): ServerInfo {
+        calls += "inspectServer(${apiKey?.let { "typed" } ?: "saved"})"
+        failInspect?.let { throw it }
+        return serverInfo
+    }
+
+    override fun deviceHasStoreKey(
+        configToml: String,
+        home: String,
+        hostname: String,
+    ): Boolean = hasStoreKey
 
     override suspend fun openStore(
         configToml: String,

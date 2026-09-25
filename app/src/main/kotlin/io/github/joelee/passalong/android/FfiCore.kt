@@ -5,21 +5,31 @@ import io.github.joelee.passalong.core.ConfigInfo
 import io.github.joelee.passalong.core.Core
 import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.core.HostKeyInfo
+import io.github.joelee.passalong.core.HttpsSetupAnswers
 import io.github.joelee.passalong.core.PresentedCertificate
+import io.github.joelee.passalong.core.ServerInfo
 import io.github.joelee.passalong.core.SetupAnswers
 import io.github.joelee.passalong.core.StoreHandle
 import io.github.joelee.passalong.domain.Item
 import io.github.joelee.passalong.ffi.PassalongException
 import io.github.joelee.passalong.ffi.PassalongStore
+import io.github.joelee.passalong.ffi.HttpsSetupAnswers as FfiHttpsSetupAnswers
 import io.github.joelee.passalong.ffi.Item as FfiItem
 import io.github.joelee.passalong.ffi.SetupAnswers as FfiSetupAnswers
 import io.github.joelee.passalong.ffi.coreVersion as ffiCoreVersion
+import io.github.joelee.passalong.ffi.deviceHasStoreKey as ffiDeviceHasStoreKey
 import io.github.joelee.passalong.ffi.fetchHostKey as ffiFetchHostKey
 import io.github.joelee.passalong.ffi.generateIdentity as ffiGenerateIdentity
+import io.github.joelee.passalong.ffi.hasApiKey as ffiHasApiKey
 import io.github.joelee.passalong.ffi.initLogging as ffiInitLogging
+import io.github.joelee.passalong.ffi.inspectServer as ffiInspectServer
 import io.github.joelee.passalong.ffi.openStore as ffiOpenStore
+import io.github.joelee.passalong.ffi.parseApiKey as ffiParseApiKey
+import io.github.joelee.passalong.ffi.parseTlsPin as ffiParseTlsPin
 import io.github.joelee.passalong.ffi.probeServer as ffiProbeServer
 import io.github.joelee.passalong.ffi.renderConfig as ffiRenderConfig
+import io.github.joelee.passalong.ffi.renderHttpsConfig as ffiRenderHttpsConfig
+import io.github.joelee.passalong.ffi.saveApiKey as ffiSaveApiKey
 import io.github.joelee.passalong.ffi.validateConfig as ffiValidateConfig
 
 /**
@@ -83,6 +93,60 @@ class FfiCore : Core {
                 keyFile = summary.keyFile,
             )
         }
+
+    override fun parseTlsPin(text: String): String = bridgedSync { ffiParseTlsPin(text) }
+
+    override fun parseApiKey(text: String): String = bridgedSync { ffiParseApiKey(text) }
+
+    override fun hasApiKey(path: String): Boolean = bridgedSync { ffiHasApiKey(path) }
+
+    override fun saveApiKey(
+        path: String,
+        key: String,
+    ) = bridgedSync { ffiSaveApiKey(path, key) }
+
+    override fun renderHttpsConfig(answers: HttpsSetupAnswers): String =
+        bridgedSync {
+            ffiRenderHttpsConfig(
+                FfiHttpsSetupAnswers(
+                    deviceName = answers.deviceName,
+                    url = answers.url,
+                    tlsPin = answers.tlsPin,
+                    apiKeyFile = answers.apiKeyFile,
+                ),
+            )
+        }
+
+    override suspend fun inspectServer(
+        configToml: String,
+        home: String,
+        hostname: String,
+        apiKey: String?,
+    ): ServerInfo =
+        bridged {
+            val info = ffiInspectServer(configToml, home, hostname, apiKey)
+            ServerInfo(
+                serverVersion = info.serverVersion,
+                apiVersion = info.apiVersion.toInt(),
+                sourceUrl = info.sourceUrl,
+                keyId = info.keyId,
+                keyLabel = info.keyLabel,
+                keyRole = info.keyRole,
+                keyExpiresAt = info.keyExpiresAt,
+                workspace = info.workspace,
+                itemCount = info.itemCount.toLong(),
+                quotaBytes = info.quotaBytes.toLong(),
+                usedBytes = info.usedBytes.toLong(),
+                encryptionState = info.encryptionState,
+                encryptionKeyId = info.encryptionKeyId,
+            )
+        }
+
+    override fun deviceHasStoreKey(
+        configToml: String,
+        home: String,
+        hostname: String,
+    ): Boolean = bridgedSync { ffiDeviceHasStoreKey(configToml, home, hostname) }
 
     override suspend fun openStore(
         configToml: String,

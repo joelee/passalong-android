@@ -54,7 +54,7 @@ docs/                 user and developer documentation; ideas, plans, reviews co
 | `just build` | `assembleDebug`, which runs `scripts/rust-android.sh` first |
 | `just rust` | the Rust library and bindings alone |
 | `just install` | the debug APK onto a connected device or emulator |
-| `just test-android` | instrumented tests on a connected device or emulator: TLS through the device's trust store; with a test server, `just test-android https://10.0.2.2:8443 sha256/...` also probes it |
+| `just test-android` | instrumented tests on a connected device or emulator: TLS through the device's trust store; with a test server (`just test-android <url> <pin> <key> <text>`), also the whole setup-then-choose flow against it |
 | `just check` | fmt-check, lint, test, coverage, build |
 
 `.pre-commit-config.yaml` runs `just check` before every commit once
@@ -158,3 +158,13 @@ $P serve                                                         # https://<this
 
 In the app, the server is `https://10.0.2.2:8443` from the emulator, or
 this machine's LAN address from a phone; paste the pin and the key.
+
+The passalong CLI v0.3.0 can put items there from this machine, which is
+how the instrumented end-to-end test gets something to list:
+
+```sh
+passalong init --url https://127.0.0.1:8443 --tls-pin <pin> --api-key-file <a file holding the key> --yes
+printf 'hello' | passalong clipboard --stdin
+passalong file report.pdf
+just test-android https://10.0.2.2:8443 <pin> <key> hello   # ServerFlowTest on the emulator
+```

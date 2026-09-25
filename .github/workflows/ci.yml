@@ -25,6 +25,9 @@ jobs:
       - uses: extractions/setup-just@v2
       - name: Install cargo-ndk
         run: cargo install --locked cargo-ndk
+      - name: Install passalong-server v0.1.0 for the bridge's server tests
+        # The server is AGPL-3.0-or-later; it is run by the tests, never linked.
+        run: cargo install --locked --git https://github.com/joelee/passalong-server --tag v0.1.0 passalong-server
       - name: Run every check
         # The runner has the JDK and Gradle already; `mise exec` is a no-op
         # shim here so the justfile works unchanged.
@@ -35,5 +38,6 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$PATH"
           just check
+          PASSALONG_SERVER_BIN="$HOME/.cargo/bin/passalong-server" just test-https
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}

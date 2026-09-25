@@ -6,7 +6,11 @@ server, a `passalong` user, and a storage directory.
 
 ## Setup
 
-The app opens on the setup screen until the device has a config.
+The app opens on the setup screen until the device has a config. The
+first choice is the kind of server, as `passalong init` asks first: an
+**SSH** server, or a **passalong-server**.
+
+### An SSH server
 
 1. **This device's public key.** The app generates an ed25519 key the
    first time. Copy the line shown and add it to
@@ -31,6 +35,50 @@ The choose screen then connects, which proves the settings. A failure
 shows the core's message, such as `cannot connect to nas.local:22` or the
 login being refused because the public key is not installed yet, with
 *Try again* and *Set up again*.
+
+### A passalong-server
+
+A [passalong-server](https://github.com/joelee/passalong-server) keeps a
+workspace for your devices. Its operator gives you three things: the
+server's address, the pin of its certificate when it is self-signed
+(`passalong-server tls fingerprint` prints it), and an API key for this
+device (`passalong-server key create`, shown once).
+
+1. **The server.** Its URL, such as `https://box.example:8443`, and a
+   name for this device. Plain `http://` is refused before anything is
+   sent: the API key would travel unencrypted.
+2. **Connect.** The app reads the server's certificate with a handshake
+   that stops before any request, so nothing, and no key, reaches a
+   server you have not confirmed. It shows the pin of the certificate's
+   public key:
+
+   > The server at https://box.example:8443 presented a certificate whose
+   > public key has the pin
+   > `sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU=`
+
+   When the operating system does not trust the certificate, as with a
+   self-signed one, paste the pin the operator gave you; it must be the
+   one presented, and after three wrong ones the flow stops and nothing is
+   written. When the system trusts it, *Trust the system* goes without a
+   pin, or you may pin it anyway. There is no trust-on-first-use, and no
+   way to turn verification off.
+3. **The API key.** Typed without being shown, and checked for its shape
+   (`pal_<id>_<secret>`) before any request; a key already saved on the
+   device is used without asking.
+4. **The server's answer.** The app asks the server about the key and the
+   workspace: `connected to passalong-server 0.1.0: API key phone
+   (read-write), expires 2026-12-23`. A wrong, expired, or revoked key is
+   reported and nothing is written.
+5. **Is it meant to be unencrypted?** When the server says the workspace
+   is not encrypted and this device holds no store key, you confirm that
+   before anything is written: a server could claim "not encrypted" to
+   make a new device send plaintext. If other devices use the workspace
+   encrypted, answer *No*: the server is not telling the truth. A device
+   that holds a store key never asks, and never sends plaintext.
+
+Only then is the key saved, readable by the app alone, and the config
+written; declining or cancelling anywhere writes nothing. The choose
+screen then connects.
 
 ## Choose
 
@@ -68,7 +116,7 @@ the list stays open.
 
 ## Encrypted stores
 
-A store encrypted with `passalong encrypt` cannot be opened by this
-version: the choose screen shows the core's message asking to join with
-`passalong encrypt --join`. Joining from the app is on the
+A store or workspace encrypted with `passalong encrypt` cannot be opened
+by this version: the choose screen shows the core's message asking to
+join with `passalong encrypt --join`. Joining from the app is on the
 [backlog](backlog.md).

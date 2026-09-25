@@ -1,5 +1,7 @@
 package io.github.joelee.passalong.domain
 
+import io.github.joelee.passalong.core.ServerInfo
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -65,5 +67,47 @@ object Formats {
         return fields.map { (label, value) -> "$label:".padEnd(LABEL_WIDTH) + value }
     }
 
+    /**
+     * The API key as `passalong check` describes it: `laptop (read-write), expires 2026-12-18`,
+     * `never expires`, `expired`, or, within [EXPIRY_WARNING_DAYS], `expires <date>, in N days:
+     * ask the server's operator for a new key`.
+     */
+    fun keySummary(
+        info: ServerInfo,
+        now: Instant,
+    ): String {
+        val name = info.keyLabel ?: info.keyId
+        val role = info.keyRole
+        val at = info.keyExpiresAt?.let { Instant.ofEpochSecond(it) } ?: return "$name ($role), never expires"
+        val date = utcDate.format(at.atZone(ZoneOffset.UTC))
+        val days = Duration.between(now, at).toDays()
+        return when {
+            !at.isAfter(now) -> "$name ($role), expired $date"
+            days < EXPIRY_WARNING_DAYS -> {
+                val soon =
+                    when (days) {
+                        0L -> "within a day"
+                        1L -> "in 1 day"
+                        else -> "in $days days"
+                    }
+                "$name ($role), expires $date, $soon: ask the server's operator for a new key"
+            }
+            else -> "$name ($role), expires $date"
+        }
+    }
+
+    /** Whether [keySummary] warns: the key has expired or expires within [EXPIRY_WARNING_DAYS]. */
+    fun keyExpiresSoon(
+        info: ServerInfo,
+        now: Instant,
+    ): Boolean {
+        val at = info.keyExpiresAt?.let { Instant.ofEpochSecond(it) } ?: return false
+        return Duration.between(now, at).toDays() < EXPIRY_WARNING_DAYS
+    }
+
+    /** How many days before an API key expires `check` starts warning. */
+    const val EXPIRY_WARNING_DAYS = 14L
+
+    private val utcDate = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ROOT)
     private const val LABEL_WIDTH = 9
 }

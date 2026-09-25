@@ -38,9 +38,9 @@ builder_agent: "Claude Code"
 builder_model: "anthropic/claude-fable-5-1"
 execution_branch: "feature/00002-passalong-server"
 execution_started_at: "2026-09-24T23:32:29Z"
-execution_updated_at: "2026-09-24T23:53:09Z"
+execution_updated_at: "2026-09-25T00:01:47Z"
 execution_completed_at: null
-current_step: "PLAN-00002-STEP-05"
+current_step: "PLAN-00002-STEP-06"
 ---
 
 # Delivery Plan 00002: Passalong Server Backend
@@ -648,12 +648,12 @@ log with the device and the logcat evidence.
 - [x] `PLAN-00002-AC-04` On the emulator, `probe_server` answers for a
       self-signed test server (`trusted = false`, its pin) and for a
       publicly trusted URL (`trusted = true`), with no JNI error.
-- [ ] `PLAN-00002-AC-05` `SetupControllerTest` covers the `run_https`
+- [x] `PLAN-00002-AC-05` `SetupControllerTest` covers the `run_https`
       decisions: untrusted certificate needs the pasted pin (three
       tries), trusted offers no pin, wrong-shape key refused, saved key
       reused, plaintext claim asked and declining writes nothing,
       confirming writes `api.key` then `config.toml`.
-- [ ] `PLAN-00002-AC-06` `just test-https` passes against
+- [x] `PLAN-00002-AC-06` `just test-https` passes against
       passalong-server v0.1.0: probe, inspect, wrong pin, wrong key,
       list/get/read/download/delete, cache identity, revoked and
       read-only keys.
@@ -705,7 +705,7 @@ extended in STEP-03) and the test server recipe from the hand-over notes.
 | PLAN-00002-STEP-02 | completed | 2026-09-24T23:38:47Z | 2026-09-24T23:38:47Z | `cargo test` 22 passed; `scripts/rust-android.sh` exit 0 for both ABIs; `just check` exit 0, coverage 99.2 % | git deps at `9ed0d4d`; `Denied` error kind; `describe` for `https`; docs for the pin bump |
 | PLAN-00002-STEP-03 | completed | 2026-09-24T23:48:48Z | 2026-09-24T23:48:48Z | `just test-android https://10.0.2.2:8443 <pin>`: 3 instrumented tests passed on emulator-5554 (Android 16, API 36); logcat `passalong_ffi::android_tls Android TLS verifier initialised`; `just check` exit 0 | `rust/src/android_tls.rs` (JNI `init_with_env`), `NativeTls.kt`, the verifier's Kotlin component from the GitHub-hosted Maven repository at the version in `rust/Cargo.lock`; `probe_server` export with a host test; instrumented tests wired (`androidx.test`) |
 | PLAN-00002-STEP-04 | completed | 2026-09-24T23:53:09Z | 2026-09-24T23:53:09Z | `just test-https` 5 passed against passalong-server 0.1.0; `cargo test` 28 passed; `just check` exit 0 | Exports `parse_tls_pin`, `parse_api_key`, `has_api_key`, `save_api_key`, `render_https_config`, `inspect_server`, `device_has_store_key`; harness `rust/tests/support/mod.rs` written from the server's docs and `--help` |
-| PLAN-00002-STEP-05 | not-started | — | — | — | — |
+| PLAN-00002-STEP-05 | completed | 2026-09-25T00:01:47Z | 2026-09-25T00:01:47Z | `just check` exit 0: 49 JVM tests, 28 Rust tests, Kover 99.3 % | `ServerKind`, `ServerStep`, `SetupOptions`; the `run_https` decision tree as events (pin with three tries or trust the system, key with three tries or the saved one, inspect, plaintext claim); `ServerSetup` interface split from `Core` for detekt; `Formats.keySummary` as `check` prints it |
 | PLAN-00002-STEP-06 | not-started | — | — | — | — |
 | PLAN-00002-STEP-07 | not-started | — | — | — | — |
 | PLAN-00002-STEP-08 | not-started | — | — | — | — |
@@ -718,6 +718,7 @@ extended in STEP-03) and the test server recipe from the hand-over notes.
 | 2026-09-24T23:38:47Z | STEP-02 | Bridge on the 0.3.0 git crates with `passalong-https` registered | `rust/Cargo.toml`, `rust/src/{error,store,lib}.rs`; `libpassalong_ffi.so` 7.1 MiB arm64 / 8.3 MiB x86_64 | STEP-03 |
 | 2026-09-24T23:48:48Z | STEP-03 | Platform verifier on Android: JNI init, Kotlin component, emulator checks | `NativeTlsTest`: dl.google.com trusted, self-signed test server pinned and untrusted, closed port is `CONNECT` | STEP-04 |
 | 2026-09-24T23:53:09Z | STEP-04 | Bridge exports for the server setup and a per-test server harness | `rust/src/setup.rs`, `rust/tests/{server.rs,support/mod.rs}`, `just test-https` | STEP-05 |
+| 2026-09-25T00:01:47Z | STEP-05 | Setup flow for a passalong-server in Kotlin and the screen | `SetupController`, `SetupScreen` (kind choice, pin, API key, claim dialogs), `SetupControllerTest` https cases, `docs/usage.md`, `docs/configuration.md` | STEP-06 |
 
 ### Deviations and blockers
 
@@ -734,12 +735,13 @@ None
 | 2026-09-24T23:38:47Z | STEP-02 | `cargo test`, `cargo clippy -D warnings`, `just rust`, `just check` | pass | 22 Rust tests, 42 JVM tests, Kover 99.2 % |
 | 2026-09-24T23:48:48Z | STEP-03 | `just check`; `just test-android https://10.0.2.2:8443 <pin>` on emulator-5554 | pass | 23 Rust tests, 42 JVM tests, Kover 99.2 %; 3 instrumented tests |
 | 2026-09-24T23:53:09Z | STEP-04 | `just test-https` (PASSALONG_SERVER_BIN=../passalong-server/target/release/passalong-server), `just check` | pass | 5 server tests, 28 Rust tests, 42 JVM tests, Kover 99.2 % |
+| 2026-09-25T00:01:47Z | STEP-05 | `just check` | pass | 49 JVM tests, 28 Rust tests, Kover 99.3 % |
 
 ### Completion summary
 
 - **Implementation status:** `in-progress`
-- **Completed requirements:** REQ-01, REQ-02, REQ-03
-- **Incomplete requirements:** REQ-04 to REQ-07
+- **Completed requirements:** REQ-01, REQ-02, REQ-03, REQ-04 (screen verified on the emulator in STEP-06)
+- **Incomplete requirements:** REQ-05 to REQ-07
 - **Outstanding blockers:** None
 - **Review request:** Not ready
 <!-- BUILDER_WORK_LOG_END -->

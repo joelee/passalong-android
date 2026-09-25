@@ -2,6 +2,7 @@ package io.github.joelee.passalong.setup
 
 import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.core.HostKeyInfo
+import io.github.joelee.passalong.core.PresentedCertificate
 import io.github.joelee.passalong.data.AppFiles
 import io.github.joelee.passalong.support.FakeCore
 import kotlinx.coroutines.Dispatchers
@@ -24,11 +25,11 @@ class SetupControllerTest {
 
     private val core = FakeCore()
     private lateinit var files: AppFiles
+    private val unconfined = SetupOptions(hostKeyTimeoutSecs = 3, io = Dispatchers.Unconfined)
 
     private fun TestScope.controller(): SetupController {
         files = AppFiles(temp.newFolder("home"))
-        return SetupController(this, core, files, "pixel-9", hostKeyTimeoutSecs = 3, io = Dispatchers.Unconfined)
-            .also { it.start() }
+        return SetupController(this, core, files, "pixel-9", unconfined).also { it.start() }
     }
 
     private fun runUnconfined(block: suspend TestScope.() -> Unit) =
@@ -58,7 +59,7 @@ class SetupControllerTest {
             assertEquals("ssh-ed25519 AAAAgenerated1 pixel-9", files.readPublicKey())
             assertFalse("the host is empty", state.canFetch)
             // A second controller finds the key and keeps it.
-            val again = SetupController(this, core, files, "pixel-9", io = Dispatchers.Unconfined).also { it.start() }
+            val again = SetupController(this, core, files, "pixel-9", unconfined).also { it.start() }
             assertEquals(1, core.generated)
             assertEquals(state.publicKey, again.state.value.publicKey)
             again.generateKey(replace = true)
@@ -182,5 +183,185 @@ class SetupControllerTest {
             assertTrue("$error", error != null && error.contains("config.toml"))
             assertFalse(controller.state.value.done)
             assertNull(controller.state.value.hostKey)
+        }
+
+    private fun SetupController.fillInServer(url: String = " https://box.example:8443 ") {
+        kindChanged(ServerKind.SERVER)
+        urlChanged(url)
+        deviceNameChanged("phone")
+    }
+
+    @Test
+    fun `the kind defaults to ssh and a server needs a url before connecting`() =
+        runUnconfined {
+            val controller = controller()
+            assertEquals(ServerKind.SSH, controller.state.value.kind)
+            controller.kindChanged(ServerKind.SERVER)
+            assertFalse(controller.state.value.canConnect)
+            controller.urlChanged("https://box.example:8443")
+            assertTrue(controller.state.value.canConnect)
+            assertFalse("the SSH host key is not fetched for a server", controller.state.value.canFetch)
+            // A plain http URL is refused by the config before any connection.
+            controller.urlChanged("http://box.example:8443")
+            controller.connect()
+            assertTrue(controller.state.value.error!!, controller.state.value.error!!.contains("http://"))
+            assertFalse(core.calls.any { it.startsWith("probeServer") })
+        }
+
+    @Test
+    fun `an untrusted certificate needs the operator's pin and three wrong ones stop the flow`() =
+        runUnconfined {
+            val pin = "sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU="
+            core.presented = PresentedCertificate(pin, trusted = false)
+            val controller = controller()
+            controller.fillInServer()
+            controller.connect()
+            assertEquals("probeServer(https://box.example:8443)", core.calls.last())
+            var step = controller.state.value.serverStep as ServerStep.ConfirmPin
+            assertEquals(pin, step.presented.pin)
+            assertEquals(3, step.attemptsLeft)
+            controller.trustSystem()
+            assertTrue(
+                "not trusted: the system cannot vouch",
+                controller.state.value.serverStep is ServerStep.ConfirmPin,
+            )
+            controller.pinTyped("nonsense")
+            step = controller.state.value.serverStep as ServerStep.ConfirmPin
+            assertEquals(2, step.attemptsLeft)
+            assertTrue(step.problem!!, step.problem!!.contains("sha256/"))
+            controller.pinTyped("sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            step = controller.state.value.serverStep as ServerStep.ConfirmPin
+            assertEquals(1, step.attemptsLeft)
+            assertEquals("That is not the pin the server presented.", step.problem)
+            controller.pinTyped("nonsense")
+            assertNull(controller.state.value.serverStep)
+            assertEquals("the server's pin was not confirmed; nothing was written", controller.state.value.error)
+            assertFalse(files.hasConfig())
+            assertFalse(files.apiKey.exists())
+        }
+
+    @Test
+    fun `a pin in curl's form is accepted and a typed key is saved before the config`() =
+        runUnconfined {
+            val pin = "sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU="
+            core.presented = PresentedCertificate(pin, trusted = false)
+            val controller = controller()
+            controller.fillInServer()
+            controller.connect()
+            controller.pinTyped(" " + pin.replaceFirst("/", "//") + "\n")
+            var step = controller.state.value.serverStep
+            assertEquals(ServerStep.TypeApiKey(3, problem = null), step)
+            controller.apiKeyTyped("not a key")
+            step = controller.state.value.serverStep as ServerStep.TypeApiKey
+            assertEquals(2, step.attemptsLeft)
+            assertTrue(step.problem!!, step.problem!!.contains("pal_"))
+            assertFalse(core.calls.any { it.startsWith("inspectServer") })
+            controller.apiKeyTyped(" pal_0123abcd_s3cr3t ")
+            assertEquals("inspectServer(typed)", core.calls.last())
+            val claim = controller.state.value.serverStep as ServerStep.ConfirmPlaintext
+            assertEquals("home", claim.info.workspace)
+            assertEquals(
+                "connected to passalong-server 0.1.0: API key phone (read-write), never expires",
+                claim.summary,
+            )
+            assertFalse("nothing written before the claim is confirmed", files.hasConfig())
+            assertFalse(files.apiKey.exists())
+            controller.plaintextConfirmed(true)
+            assertTrue(controller.state.value.done)
+            assertNull(controller.state.value.serverStep)
+            assertEquals(listOf("pal_0123abcd_s3cr3t"), core.savedKeys)
+            assertEquals("pal_0123abcd_s3cr3t\n", files.apiKey.readText())
+            val written = files.readConfig()!!
+            assertTrue(written, written.contains("url = \"https://box.example:8443\""))
+            assertTrue(written, written.contains("tls_pin = \"$pin\""))
+            assertTrue(written, written.contains("api_key_file = \"${files.apiKey.path}\""))
+            assertTrue(written, written.contains("device_name = \"phone\""))
+        }
+
+    @Test
+    fun `a trusted certificate may go without a pin and a saved key is used unasked`() =
+        runUnconfined {
+            core.presented = PresentedCertificate("sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU=", trusted = true)
+            core.serverInfo = core.serverInfo.copy(encryptionState = "sealed", encryptionKeyId = "3f9a2c1d3f9a2c1d")
+            val controller = controller()
+            files.apiKey.writeText("pal_0123abcd_saved\n")
+            controller.fillInServer()
+            controller.connect()
+            controller.trustSystem()
+            assertEquals("inspectServer(saved)", core.calls.last())
+            // A sealed workspace needs no claim confirmed: the config is written at once.
+            assertTrue(controller.state.value.done)
+            assertTrue(core.savedKeys.isEmpty())
+            val written = files.readConfig()!!
+            assertTrue(written, written.contains("# No tls_pin"))
+            assertFalse(written, written.contains("tls_pin ="))
+        }
+
+    @Test
+    fun `declining the plaintext claim or a refused key writes nothing`() =
+        runUnconfined {
+            core.presented = PresentedCertificate("sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU=", trusted = true)
+            val controller = controller()
+            controller.fillInServer()
+            controller.connect()
+            controller.trustSystem()
+            controller.apiKeyTyped("pal_0123abcd_s3cr3t")
+            assertTrue(controller.state.value.serverStep is ServerStep.ConfirmPlaintext)
+            controller.plaintextConfirmed(false)
+            assertNull(controller.state.value.serverStep)
+            assertTrue(
+                controller.state.value.error!!.startsWith("the server's claim was not confirmed; nothing was written"),
+            )
+            assertFalse(files.hasConfig())
+            assertFalse(files.apiKey.exists())
+            // A device with a store key never asks: it would refuse plaintext itself.
+            core.hasStoreKey = true
+            controller.connect()
+            controller.trustSystem()
+            controller.apiKeyTyped("pal_0123abcd_s3cr3t")
+            assertTrue(controller.state.value.done)
+            // A refused key is reported, and nothing written.
+            files.config.delete()
+            files.apiKey.delete()
+            core.savedKeys.clear()
+            core.failInspect = CoreException(CoreException.Kind.DENIED, "the server refused (KEY_REVOKED)")
+            val again = SetupController(this, core, files, "pixel-9", unconfined).also { it.start() }
+            again.fillInServer()
+            again.connect()
+            again.trustSystem()
+            again.apiKeyTyped("pal_0123abcd_s3cr3t")
+            assertEquals("the server refused (KEY_REVOKED)", again.state.value.error)
+            assertFalse(again.state.value.done)
+            assertFalse(files.hasConfig())
+            assertTrue(core.savedKeys.isEmpty())
+        }
+
+    @Test
+    fun `cancelling the pin or the key, and a failed probe, are reported`() =
+        runUnconfined {
+            val controller = controller()
+            controller.fillInServer()
+            controller.connect()
+            controller.cancelPin()
+            assertEquals("the server's pin was not confirmed; nothing was written", controller.state.value.error)
+            core.presented = PresentedCertificate("sha256/Zmh6rfhivXdsj8GLjp+OIAiXFIVu4jOzkCpZHQ1fKSU=", trusted = true)
+            controller.connect()
+            controller.trustSystem()
+            controller.cancelApiKey()
+            assertEquals("no API key was typed; nothing was written", controller.state.value.error)
+            controller.connect()
+            controller.trustSystem()
+            repeat(3) { controller.apiKeyTyped("bad") }
+            assertEquals("no usable API key was typed; nothing was written", controller.state.value.error)
+            core.failProbe = CoreException(CoreException.Kind.CONNECT, "cannot reach https://box.example:8443: refused")
+            controller.connect()
+            assertEquals("cannot reach https://box.example:8443: refused", controller.state.value.error)
+            assertNull(controller.state.value.serverStep)
+            // Changing the URL forgets a probe.
+            core.failProbe = null
+            controller.connect()
+            assertTrue(controller.state.value.serverStep is ServerStep.ConfirmPin)
+            controller.urlChanged("https://other:8443")
+            assertNull(controller.state.value.serverStep)
         }
 }
