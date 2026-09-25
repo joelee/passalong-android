@@ -106,6 +106,18 @@ full-screen view; other files are refused with `item <ID> is binary
 first, then reads the list again from the store, so items other devices
 removed meanwhile disappear too.
 
+The bottom line names the store, as `passalong check` does: `ssh
+passalong@nas.local:22 /srv/passalong`, or `https https://box.example:8443`.
+With a passalong-server, the app also asks the server about the API key
+when it connects, as `check` does, and warns in the bottom line when the
+key has expired or expires within 14 days: `API key phone (read-write),
+expires 2026-10-02, in 7 days: ask the server's operator for a new key`.
+A key the server refuses for good, because it is wrong, expired, or
+revoked, fails the connection with the server's reason and offers *Set up
+again* first, since only a new key from the operator helps. A read-only
+key lists, loads, and shows items; deleting one is refused by the server,
+which the bottom line reports.
+
 The list opens from the list cache when it was checked within two
 minutes, and the bottom line says how old it is, such as `cached 30 s
 ago`. The connection is still made first, for the actions. While the list

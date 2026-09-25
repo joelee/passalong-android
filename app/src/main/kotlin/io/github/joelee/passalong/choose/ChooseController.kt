@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.time.ZoneId
 import kotlin.coroutines.CoroutineContext
 
@@ -42,13 +43,16 @@ sealed interface Connection {
 data class Viewer(val item: Item, val text: String)
 
 /**
- * What the chosen action needs besides the store, as the TUI's `ActionTargets`, and where
- * blocking work (files, the Downloads copy) runs: [io], never the main thread.
+ * What the chosen action needs besides the store, as the TUI's `ActionTargets` (which carries
+ * the UTC offset too): the sinks, where blocking work (files, the Downloads copy) runs, never
+ * the main thread, the zone times are shown in, and the clock for the API key's expiry.
  */
 data class ActionTargets(
     val clipboard: ClipboardSink,
     val downloads: DownloadsSink,
     val io: CoroutineContext = Dispatchers.IO,
+    val zone: ZoneId = ZoneId.systemDefault(),
+    val now: () -> Instant = Instant::now,
 )
 
 /** Everything the choose screen shows. */
@@ -76,7 +80,6 @@ class ChooseController(
     private val files: AppFiles,
     private val hostname: String,
     private val targets: ActionTargets,
-    private val zone: ZoneId = ZoneId.systemDefault(),
 ) {
     private val _state = MutableStateFlow(ChooseState())
 
@@ -90,18 +93,26 @@ class ChooseController(
     fun connect() {
         _state.update { it.copy(connection = Connection.Connecting, busy = true) }
         scope.launch {
+            val config =
+                runCatching { withContext(targets.io) { files.readConfig() } ?: throw noConfig() }
+                    .getOrElse { err ->
+                        fail(err.rethrowCancellation())
+                        return@launch
+                    }
             val opened =
-                runCatching {
-                    val config = withContext(targets.io) { files.readConfig() } ?: throw noConfig()
-                    core.openStore(config, files.home.path, hostname, files.listCache.path)
-                }.getOrElse { err ->
-                    fail(err.rethrowCancellation())
-                    return@launch
-                }
+                runCatching { core.openStore(config, files.home.path, hostname, files.listCache.path) }
+                    .getOrElse { err ->
+                        fail(err.rethrowCancellation())
+                        return@launch
+                    }
             store = opened
             actions = ItemActions(opened, targets.clipboard, targets.downloads, targets.io)
             _state.update { it.copy(connection = Connection.Ready(opened.description)) }
             open(opened)
+            keyWarning(core, files, hostname, config, targets.now())?.let {
+                    warning ->
+                update { it.withStatus(warning) }
+            }
         }
     }
 
@@ -185,7 +196,7 @@ class ChooseController(
     ) {
         attempt(onFailure = { failure -> update { it.withStatus("cannot read $id: $failure") } }) {
             val meta = store.getMeta(id)
-            update { it.showDetails(meta.id, Formats.metaLines(meta, zone)) }
+            update { it.showDetails(meta.id, Formats.metaLines(meta, targets.zone)) }
         }
     }
 
@@ -286,3 +297,21 @@ private suspend fun <T> attempt(
     }
 
 private fun noConfig() = CoreException(CoreException.Kind.CONFIG, "no config file: set up this device first")
+
+/**
+ * With a passalong-server, one more request, `getViewer`, as `check` makes: the status line's
+ * warning when the API key has expired or expires within [Formats.EXPIRY_WARNING_DAYS], else
+ * null. A failure here changes nothing: the store is open.
+ */
+private suspend fun keyWarning(
+    core: Core,
+    files: AppFiles,
+    hostname: String,
+    config: String,
+    now: Instant,
+): String? {
+    val kind = runCatching { core.validateConfig(config, files.home.path, hostname).serverKind }.getOrNull()
+    if (kind != "https") return null
+    val info = runCatching { core.inspectServer(config, files.home.path, hostname, null) }.getOrNull() ?: return null
+    return if (Formats.keyExpiresSoon(info, now)) "API key ${Formats.keySummary(info, now)}" else null
+}

@@ -131,3 +131,133 @@ async fn the_rendered_config_opens_the_workspace_and_the_cache_names_it() {
     assert!(saved.contains(&server.url), "{saved}");
     assert_eq!(store.cached().unwrap().items, []);
 }
+
+/// Items in the workspace, put there as the CLI puts them, through the
+/// same client crate the bridge uses; the bridge then does what `choose`
+/// does with them.
+async fn seed(server: &TestServer, dir: &TempDir) -> (String, String) {
+    use passalong_core::model::NewItem;
+    use passalong_core::store::Store;
+    let key_file = dir.path().join("api.key").display().to_string();
+    save_api_key(key_file.clone(), server.key.clone()).unwrap();
+    let text = server.config(dir.path(), true);
+    let env = passalong_ffi::AppEnv::new(home(dir), "host");
+    let config =
+        passalong_core::config::parse(&text, std::path::Path::new("c.toml"), &env).unwrap();
+    let store = passalong_https::open_https_store(&config).await.unwrap();
+    let store = &store;
+    let put = |item: NewItem, bytes: &'static [u8]| {
+        let content: passalong_core::fs::BoxRead = Box::new(std::io::Cursor::new(bytes));
+        async move { store.put(item, content).await.unwrap().meta.id.to_string() }
+    };
+    let text_id = put(NewItem::text("host"), b"hello over https").await;
+    let file_id = put(NewItem::file("report.pdf", "host"), b"%PDF-1.4 test").await;
+    (text_id, file_id)
+}
+
+#[tokio::test]
+#[ignore = "needs passalong-server: just test-https"]
+async fn choose_over_a_server_lists_reads_downloads_and_deletes() {
+    let server = TestServer::start();
+    let dir = TempDir::new().unwrap();
+    let (text_id, file_id) = seed(&server, &dir).await;
+    let cache = dir.path().join("list-cache.json").display().to_string();
+    let store = open_store(
+        server.config(dir.path(), true),
+        home(&dir),
+        "phone".into(),
+        Some(cache),
+    )
+    .await
+    .unwrap();
+    let items = store.list(false).await.unwrap();
+    let ids: Vec<&str> = items.iter().map(|item| item.id.as_str()).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(
+        ids.contains(&text_id.as_str()) && ids.contains(&file_id.as_str()),
+        "{ids:?}"
+    );
+    assert_eq!(
+        store
+            .get_meta(text_id.clone())
+            .await
+            .unwrap()
+            .preview
+            .as_deref(),
+        Some("hello over https")
+    );
+    assert_eq!(
+        store.read_text(text_id.clone()).await.unwrap(),
+        "hello over https"
+    );
+    let downloaded = store
+        .download(
+            file_id.clone(),
+            Some(dir.path().join("dl").display().to_string()),
+        )
+        .await
+        .unwrap();
+    assert!(downloaded.ends_with("report.pdf"), "{downloaded}");
+    assert_eq!(std::fs::read(&downloaded).unwrap(), b"%PDF-1.4 test");
+    assert_eq!(store.delete(file_id.clone()).await.unwrap().id, file_id);
+    assert_eq!(
+        store.cached().unwrap().items.len(),
+        1,
+        "the cache dropped it at once"
+    );
+    assert_eq!(store.list(true).await.unwrap().len(), 1);
+    let err = store.get_meta(file_id).await.unwrap_err();
+    assert!(matches!(err, PassalongError::NotFound(_)), "{err:?}");
+}
+
+#[tokio::test]
+#[ignore = "needs passalong-server: just test-https"]
+async fn a_read_only_key_may_list_but_not_delete_and_a_revoked_key_is_denied() {
+    let server = TestServer::start();
+    let dir = TempDir::new().unwrap();
+    let (text_id, _) = seed(&server, &dir).await;
+    let read_only = server.create_key(&["--read-only"]);
+    let ro_dir = TempDir::new().unwrap();
+    save_api_key(
+        ro_dir.path().join("api.key").display().to_string(),
+        read_only.clone(),
+    )
+    .unwrap();
+    let store = open_store(
+        server.config(ro_dir.path(), true),
+        home(&ro_dir),
+        "phone".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(store.list(true).await.unwrap().len(), 2);
+    assert_eq!(
+        store.read_text(text_id.clone()).await.unwrap(),
+        "hello over https"
+    );
+    let err = store.delete(text_id.clone()).await.unwrap_err();
+    assert!(
+        !matches!(err, PassalongError::NotFound(_) | PassalongError::Denied(_)),
+        "{err:?}"
+    );
+    assert_eq!(
+        store.list(true).await.unwrap().len(),
+        2,
+        "nothing was deleted"
+    );
+    // The operator revokes the key: the next request is refused for good.
+    let id = parse_api_key(read_only).unwrap();
+    server.run(&["key", "revoke", &id]);
+    let err = store.list(true).await.unwrap_err();
+    assert!(matches!(err, PassalongError::Denied(_)), "{err:?}");
+    let err = inspect_server(
+        server.config(ro_dir.path(), true),
+        home(&ro_dir),
+        "phone".into(),
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, PassalongError::Denied(_)), "{err:?}");
+}

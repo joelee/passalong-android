@@ -63,11 +63,15 @@ install:
     {{gradle}} installDebug
 
 # Instrumented tests on the connected device or emulator; `server` and `pin`
-# name a self-signed passalong-server to probe (docs/developer-guide.md)
-test-android server="" pin="":
+# name a self-signed passalong-server to probe, and with `key` and `text`
+# (an API key, and the text of an item the CLI put there) the whole
+# setup-then-choose flow runs against it (docs/developer-guide.md)
+test-android server="" pin="" key="" text="":
     {{gradle}} connectedDebugAndroidTest \
         -Pandroid.testInstrumentationRunnerArguments.server="{{server}}" \
-        -Pandroid.testInstrumentationRunnerArguments.pin="{{pin}}"
+        -Pandroid.testInstrumentationRunnerArguments.pin="{{pin}}" \
+        -Pandroid.testInstrumentationRunnerArguments.key="{{key}}" \
+        -Pandroid.testInstrumentationRunnerArguments.text="{{text}}"
 
 # Every mandated check: format, lint, tests, coverage, build
 check: fmt-check lint test coverage build

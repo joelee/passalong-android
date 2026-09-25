@@ -202,7 +202,8 @@ class FakeCore(var store: FakeStore = FakeStore()) : Core {
         if (configToml.contains("url = \"http://")) {
             throw CoreException(CoreException.Kind.CONFIG, "server.https.url: plain http:// is refused")
         }
-        return ConfigInfo("d", "ssh", "h", 22, "u", "/r", "$home/keys/id_ed25519", "$home/Downloads", null)
+        val kind = if (configToml.contains("kind = \"https\"")) "https" else "ssh"
+        return ConfigInfo("d", kind, "h", 22, "u", "/r", "$home/keys/id_ed25519", "$home/Downloads", null)
     }
 
     var serverInfo: ServerInfo =

@@ -25,6 +25,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.IOException
+import java.time.Duration
+import java.time.Instant
 import java.time.ZoneOffset
 
 /** Mirrors the TUI's `run_picker` tests: the statuses each step shows. */
@@ -51,9 +53,9 @@ class ChooseControllerTest {
         files = AppFiles(temp.newFolder())
         store.downloadDir = files.home.resolve("Downloads")
         if (withConfig) files.writeConfig("[server]\nkind = \"ssh\"\n")
-        val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined)
+        val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined, ZoneOffset.UTC)
         store.onCall = { statuses += current.state.value.picker.status }
-        current = ChooseController(this, core, files, "pixel", targets, ZoneOffset.UTC)
+        current = ChooseController(this, core, files, "pixel", targets)
         backgroundScope.launch { current.state.toList(mutableListOf()) }
         current.connect()
         return current
@@ -299,12 +301,56 @@ class ChooseControllerTest {
             files = AppFiles(temp.newFolder())
             files.writeConfig("[server]\nkind = \"ssh\"\n")
             assertTrue("cannot run as root: the test needs an unreadable file", files.config.setReadable(false))
-            val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined)
-            current = ChooseController(this, core, files, "pixel", targets, ZoneOffset.UTC)
+            val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined, ZoneOffset.UTC)
+            current = ChooseController(this, core, files, "pixel", targets)
             current.connect()
             val failed = current.state.value.connection as Connection.Failed
             assertEquals(CoreException.Kind.IO, failed.kind)
             assertTrue(failed.message, failed.message.contains("config.toml"))
             assertFalse(current.state.value.busy)
+        }
+
+    @Test
+    fun `over a server, a key that expires soon is warned about and a refused key needs setup`() =
+        runUnconfined {
+            files = AppFiles(temp.newFolder())
+            store.downloadDir = files.home.resolve("Downloads")
+            files.writeConfig("[server]\nkind = \"https\"\n[server.https]\nurl = \"https://box:8443\"\n")
+            val now = Instant.parse("2026-09-25T00:00:00Z")
+            val inAWeek = now.plus(Duration.ofDays(7)).plusSeconds(60).epochSecond
+            core.serverInfo = core.serverInfo.copy(keyExpiresAt = inAWeek)
+            val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined, ZoneOffset.UTC, now = { now })
+            current = ChooseController(this, core, files, "pixel", targets)
+            current.connect()
+            assertEquals(Connection.Ready(store.description), current.state.value.connection)
+            assertEquals(2, current.state.value.picker.total)
+            assertEquals(
+                "API key phone (read-write), expires 2026-10-02, in 7 days: ask the server's operator for a new key",
+                current.state.value.picker.status,
+            )
+            assertEquals("inspectServer(saved)", core.calls.last())
+            // A key with time left says nothing; a failed viewer request changes nothing.
+            core.serverInfo = core.serverInfo.copy(keyExpiresAt = null)
+            current.reconnect()
+            assertNull(current.state.value.picker.status)
+            core.failInspect = CoreException(CoreException.Kind.CONNECT, "dropped")
+            current.reconnect()
+            assertEquals(Connection.Ready(store.description), current.state.value.connection)
+            assertNull(current.state.value.picker.status)
+            // A refused device: the connection fails with the server's reason.
+            val refused = "the server refused (KEY_REVOKED): ask the operator"
+            core.failOpen = CoreException(CoreException.Kind.DENIED, refused)
+            current.reconnect()
+            assertEquals(
+                Connection.Failed(refused, CoreException.Kind.DENIED),
+                current.state.value.connection,
+            )
+        }
+
+    @Test
+    fun `over ssh no viewer request is made`() =
+        runUnconfined {
+            controller()
+            assertFalse(core.calls.any { it.startsWith("inspectServer") })
         }
 }
