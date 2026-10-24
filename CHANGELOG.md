@@ -38,6 +38,8 @@ project uses [Semantic Versioning](https://semver.org/).
   reaching the status line; the choose screen kept the previous server's
   store after "Set up again"; file copies and config reads ran on the
   main thread (Review 00001, PLAN-00002 STEP-01).
+- CI failed before its first check: the workflow's stand-in for `mise`
+  passed `--` to `exec`, which `/bin/sh` on the runner runs as a command.
 
 ### Added, earlier
 - The app, from scratch: a Kotlin and Jetpack Compose client over the

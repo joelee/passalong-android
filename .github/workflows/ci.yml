@@ -30,10 +30,11 @@ jobs:
         run: cargo install --locked --git https://github.com/joelee/passalong-server --tag v0.1.0 passalong-server
       - name: Run every check
         # The runner has the JDK and Gradle already; `mise exec` is a no-op
-        # shim here so the justfile works unchanged.
+        # shim here so the justfile works unchanged. It drops `exec --`
+        # before running the rest, since dash's `exec` does not take `--`.
         run: |
           mkdir -p "$HOME/.local/bin"
-          printf '#!/bin/sh\nshift\nexec "$@"\n' > "$HOME/.local/bin/mise"
+          printf '#!/bin/sh\nshift 2\nexec "$@"\n' > "$HOME/.local/bin/mise"
           chmod +x "$HOME/.local/bin/mise"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$PATH"
