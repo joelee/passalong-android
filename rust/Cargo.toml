@@ -1,6 +1,6 @@
 [package]
 name = "passalong-ffi"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
@@ -30,8 +30,12 @@ missing_docs = "warn"
 
 [dependencies]
 # The core, pinned exactly: the app must behave like the CLI of that version.
-passalong-core = { version = "=0.2.0", default-features = false }
-passalong-ssh = "=0.2.0"
+# v0.3.0 is not on crates.io yet, so the three crates come from the client
+# repository at one commit of its v0.3.0 branch; switch to `version =
+# "=0.3.0"` once it is published (docs/backlog.md).
+passalong-core = { git = "https://github.com/joelee/passalong", rev = "9ed0d4defca5558c85388e73b89fc777e9c06a13", default-features = false }
+passalong-ssh = { git = "https://github.com/joelee/passalong", rev = "9ed0d4defca5558c85388e73b89fc777e9c06a13" }
+passalong-https = { git = "https://github.com/joelee/passalong", rev = "9ed0d4defca5558c85388e73b89fc777e9c06a13" }
 
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 getrandom = "0.4"
@@ -46,6 +50,10 @@ uniffi = { version = "0.29", features = ["tokio"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_log-sys = "0.3"
+# The one JNI entry point, `android_tls.rs`, which hands the app's context
+# to the platform verifier that passalong-https trusts the system with.
+jni = "0.22"
+rustls-platform-verifier = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

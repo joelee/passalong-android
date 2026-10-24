@@ -13,15 +13,19 @@ core.Core, core.StoreHandle                     Kotlin interfaces; tests use fak
         │
 android.FfiCore                                 the only file that imports the UniFFI bindings
         │ JNA
-rust/ passalong-ffi                             UniFFI exports; tokio; logcat
+rust/ passalong-ffi                             UniFFI exports; tokio; logcat; one JNI init for TLS
         │
-passalong-core, passalong-ssh (crates.io =0.2.0) → SSH/SFTP server
+passalong-core, -ssh, -https (v0.3.0, git)      → SSH/SFTP server, or a passalong-server over HTTPS
 ```
 
 The app never reimplements store logic. Every call that reads or changes
 the store is a Kotlin `suspend` function backed by an async Rust function
 (`#[uniffi::export(async_runtime = "tokio")]`), so nothing blocks the main
-thread and the bridge needs no threads of its own beyond tokio's.
+thread and the bridge needs no threads of its own beyond tokio's. The
+few blocking calls the app makes itself, reading the config and the list
+cache, making a key, copying a download into MediaStore, run on
+`Dispatchers.IO` (`ActionTargets.io`, `SetupController.io`; the tests
+pass `Dispatchers.Unconfined`).
 
 ## The bridge surface (`rust/src`)
 
@@ -30,6 +34,12 @@ thread and the bridge needs no threads of its own beyond tokio's.
 | `core_version`, `bridge_version` | The pinned core version, and this crate's |
 | `init_logging(level)` | `passalong_core::telemetry::init` with a writer that sends each record to logcat (tag `passalong`), or to standard error on other hosts. Idempotent |
 | `fetch_host_key(host, port, timeout)` | `passalong_ssh::fetch_host_key`: the server's key and fingerprint, not yet trusted |
+| `probe_server(url)` | `passalong_https::tls::presented`: the pin of the certificate a passalong-server presents, and whether the system trusts it, from a handshake that stops before any request |
+| `parse_tls_pin(text)`, `parse_api_key(text)` | The shape checks `init` makes before any request: a pin in either written form, canonical afterwards; an API key `pal_<id>_<secret>`, of which only the id comes back |
+| `has_api_key(path)`, `save_api_key(path, key)` | `passalong_core::api_key`: the owner-only `api.key` file, refused when others can read it |
+| `render_https_config(answers)` | `passalong_core::config::render_https`, the file `init` writes for a server |
+| `inspect_server(config, home, hostname, api_key?)` | `getViewer` and `getWorkspace` through `passalong_https::Client`, with the typed key or the saved one: server version, key label, role, and expiry, workspace name, items, quota, and encryption state. Nothing is written |
+| `device_has_store_key(config, home, hostname)` | Whether `client.key_file` holds a store key, which decides whether a "not encrypted" claim needs the user's confirmation |
 | `generate_identity(path, comment, replace)` | An ed25519 key in OpenSSH format, mode 0600, with `.pub` beside it; refuses to replace an existing key unless told |
 | `render_config(answers)` | `passalong_core::config::render`, the file `passalong init` writes |
 | `validate_config(text, home, hostname)` | `passalong_core::config::parse` under the app's environment |
@@ -46,6 +56,16 @@ Errors cross the bridge as one flat enum, `PassalongError`, grouped by
 what the app can do: `Config`, `Connect`, `NotFound`, `Encryption`,
 `Store`, `Io`. Messages are the core's own, which say how to fix things.
 
+### A server
+
+`open_store` registers `passalong_https` beside `ssh` and `local`, so a
+`kind = "https"` config opens an `HttpStore` through the same
+`BackendRegistry` the CLI uses; listing, reading, verifying, and deleting
+are the core's, byte for byte as the CLI does them. The bridge adds only
+what the setup screen needs (the table above), and one error kind of its
+own, `Denied`, for a server that refuses the device for good: a wrong,
+expired, or revoked API key, which only a new key from the operator fixes.
+
 ### The list cache
 
 The CLI's `choose` opens from `serve`'s list cache when it was checked
@@ -58,6 +78,24 @@ rewrites it (`R`); `delete` drops the item from it. As in the CLI, only
 `ssh` stores with `serve.list_cache` on are cached, under the same
 identity string, so a cache written by the CLI for the same store and key
 would be usable.
+
+### TLS on Android
+
+`passalong-https` verifies a server's certificate in one of two ways, as
+the CLI does: against the `tls_pin` when the config has one (that public
+key and nothing else, which is how a self-signed server is reached), or
+through the operating system's trust store when it has none, using
+`rustls-platform-verifier`. On Android that crate calls into the JVM, so
+it must be handed the app's `Context` once, before the first connection.
+That is the bridge's one JNI entry point, `rust/src/android_tls.rs`
+(`NativeTls.init(context)` in Kotlin, called by `PassalongApp` at
+start), and the verifier's Kotlin half, `org.rustls:rustls-platform-verifier`,
+is on the app's classpath at exactly the version of the
+`rustls-platform-verifier-android` crate in `rust/Cargo.lock`, which
+`app/build.gradle.kts` reads. The probe `init` makes before any request
+(`probe_server`) uses the same verifier to say whether the system trusts
+the certificate. Without the initialisation, pinned servers still work
+and the probe fails; `PassalongApp` logs that once.
 
 ## The picker
 
@@ -87,8 +125,13 @@ since the actions need the store), shows a fresh cache with its age or
 `Deleting <id>...`, deletes, reads the list again with `Reloading...`, and
 says `deleted <id>`; `Reload` shows the cache while it is fresh, otherwise
 reads with reuse; `ReloadServer` reads everything. Failures land in the
-status line (`cannot delete <id>: ...`) and the list stays open. Events
-are ignored while the store is busy, as keys wait in the TUI.
+status line (`cannot delete <id>: ...`) and the list stays open; so do
+failures that are not the core's, such as Downloads refusing a file
+(`attempt` in `ChooseController` describes any exception but a
+cancellation), and a view model's scope carries a
+`CoroutineExceptionHandler` as the last line, so nothing ends the
+process. Events are dropped while the store is busy, as keys wait in the
+TUI: a touch during a load does nothing.
 
 Two things differ because a phone has no terminal. `Load` and `Cat` do
 not close the list: loading reports in a snackbar, and the content opens
@@ -109,7 +152,10 @@ host key, and shows the fingerprint with the same words as the CLI. Only
 confirming renders the config, validates it back, and writes it; declining
 writes nothing. The choose screen then connects, which is `init`'s
 connection test; a failure shows the core's message with *Try again* and
-*Set up again*.
+*Set up again*. A setup that completes from *Set up again* makes the
+retained choose controller `reconnect()`: it forgets the store, the list,
+the filter, and any open view, and connects to whatever the config now
+names, so nothing of the previous server is shown or acted on.
 
 ## Build pipeline
 

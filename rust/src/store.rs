@@ -51,6 +51,7 @@ pub async fn open_store(
     let config = config::parse(&config_toml, Path::new("config.toml"), &env)?;
     let mut registry = BackendRegistry::with_builtin();
     passalong_ssh::register(&mut registry);
+    passalong_https::register(&mut registry);
     let store = registry.open(&config).await?;
     tracing::info!(kind = %config.server.kind, "store opened");
     Ok(Arc::new(PassalongStore {
@@ -182,18 +183,23 @@ fn is_text(meta: &ItemMeta) -> bool {
     meta.kind == ItemKind::Text || meta.mime.starts_with("text/")
 }
 
+/// Where the items are, as `passalong check` names the server: `ssh
+/// user@host:port path`, `https url`, or `local path`.
 fn describe(config: &Config) -> String {
+    let server = &config.server;
     match (
-        config.server.kind.as_str(),
-        &config.server.ssh,
-        &config.server.local,
+        server.kind.as_str(),
+        &server.ssh,
+        &server.https,
+        &server.local,
     ) {
-        ("ssh", Some(ssh), _) => format!(
+        ("ssh", Some(ssh), _, _) => format!(
             "ssh {}@{}:{} {}",
             ssh.user, ssh.host, ssh.port, ssh.remote_path
         ),
-        (kind, _, Some(local)) => format!("{kind} {}", local.path.display()),
-        (kind, _, _) => kind.to_owned(),
+        ("https", _, Some(https), _) => format!("https {}", https.url),
+        (kind, _, _, Some(local)) => format!("{kind} {}", local.path.display()),
+        (kind, _, _, _) => kind.to_owned(),
     }
 }
 
@@ -480,6 +486,20 @@ mod tests {
         assert!(matches!(err, PassalongError::Encryption(_)), "{err:?}");
     }
 
+    #[tokio::test]
+    async fn a_server_config_without_an_api_key_is_refused_before_connecting() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().display().to_string();
+        let text = "[server]\nkind = \"https\"\n[server.https]\nurl = \"https://127.0.0.1:1\"\n";
+        let err = open_store(text.into(), home, "d".into(), None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, PassalongError::Config(m) if m.contains("no API key in") && m.contains("api.key")),
+            "{err:?}"
+        );
+    }
+
     /// The cache alone, over a local store, since the bridge only caches
     /// `ssh` stores: fresh caches are shown with their age, `r` refreshes,
     /// `R` reads everything again, and a deletion leaves the cache at once.
@@ -558,6 +578,17 @@ mod tests {
         assert_eq!(cache.identity, "ssh u@h:22 /r plain");
         assert_eq!(cache.max_age, Duration::from_secs(120));
         assert_eq!(describe(&ssh("")), "ssh u@h:22 /r");
+        let https = config::parse(
+            "[server]\nkind = \"https\"\n[server.https]\nurl = \"https://box:8443\"\n",
+            Path::new("c.toml"),
+            &env,
+        )
+        .unwrap();
+        assert_eq!(describe(&https), "https https://box:8443");
+        assert!(
+            Cache::for_config(&https, dir.path().join("c.json")).is_none(),
+            "no API key file yet, so no identity"
+        );
         assert!(
             Cache::for_config(
                 &ssh("[serve]\nlist_cache = false\n"),

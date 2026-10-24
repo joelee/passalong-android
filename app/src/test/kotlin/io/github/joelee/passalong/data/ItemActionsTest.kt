@@ -5,6 +5,7 @@ import io.github.joelee.passalong.support.FakeClipboard
 import io.github.joelee.passalong.support.FakeDownloads
 import io.github.joelee.passalong.support.FakeStore
 import io.github.joelee.passalong.support.Samples
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,7 +24,7 @@ class ItemActionsTest {
     private val store = FakeStore(listOf(file, text)).apply { texts[text.id] = "hello" }
     private val clipboard = FakeClipboard()
     private val downloads = FakeDownloads()
-    private val actions = ItemActions(store, clipboard, downloads)
+    private val actions = ItemActions(store, clipboard, downloads, Dispatchers.Unconfined)
 
     @Test
     fun `loading text puts it on the clipboard`() =

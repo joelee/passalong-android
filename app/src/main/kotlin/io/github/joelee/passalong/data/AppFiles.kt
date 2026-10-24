@@ -16,6 +16,9 @@ class AppFiles(val home: File) {
     /** The public key file. */
     val publicKey: File = File(identity.path + ".pub")
 
+    /** A passalong-server API key, owner-only, beside the config as `init` places it. */
+    val apiKey: File = File(home, "api.key")
+
     /** The list cache, as `serve` keeps it on desktops. */
     val listCache: File = File(home, "list-cache.json")
 

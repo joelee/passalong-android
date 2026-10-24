@@ -14,12 +14,18 @@ import io.github.joelee.passalong.domain.Item
 import io.github.joelee.passalong.domain.Outcome
 import io.github.joelee.passalong.domain.Picker
 import io.github.joelee.passalong.domain.PickerEvent
+import io.github.joelee.passalong.domain.describe
+import io.github.joelee.passalong.domain.rethrowCancellation
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.time.ZoneId
+import kotlin.coroutines.CoroutineContext
 
 /** The store connection `choose` makes before it shows the list. */
 sealed interface Connection {
@@ -36,8 +42,18 @@ sealed interface Connection {
 /** An item's content shown as `passalong cat` prints it. */
 data class Viewer(val item: Item, val text: String)
 
-/** What the chosen action needs besides the store, as the TUI's `ActionTargets`. */
-data class ActionTargets(val clipboard: ClipboardSink, val downloads: DownloadsSink)
+/**
+ * What the chosen action needs besides the store, as the TUI's `ActionTargets` (which carries
+ * the UTC offset too): the sinks, where blocking work (files, the Downloads copy) runs, never
+ * the main thread, the zone times are shown in, and the clock for the API key's expiry.
+ */
+data class ActionTargets(
+    val clipboard: ClipboardSink,
+    val downloads: DownloadsSink,
+    val io: CoroutineContext = Dispatchers.IO,
+    val zone: ZoneId = ZoneId.systemDefault(),
+    val now: () -> Instant = Instant::now,
+)
 
 /** Everything the choose screen shows. */
 data class ChooseState(
@@ -64,7 +80,6 @@ class ChooseController(
     private val files: AppFiles,
     private val hostname: String,
     private val targets: ActionTargets,
-    private val zone: ZoneId = ZoneId.systemDefault(),
 ) {
     private val _state = MutableStateFlow(ChooseState())
 
@@ -78,50 +93,65 @@ class ChooseController(
     fun connect() {
         _state.update { it.copy(connection = Connection.Connecting, busy = true) }
         scope.launch {
-            val config = files.readConfig()
-            if (config == null) {
-                fail(CoreException(CoreException.Kind.CONFIG, "no config file: set up this device first"))
-                return@launch
-            }
+            val config =
+                runCatching { withContext(targets.io) { files.readConfig() } ?: throw noConfig() }
+                    .getOrElse { err ->
+                        fail(err.rethrowCancellation())
+                        return@launch
+                    }
             val opened =
-                try {
-                    core.openStore(config, files.home.path, hostname, files.listCache.path)
-                } catch (err: CoreException) {
-                    fail(err)
-                    return@launch
-                }
+                runCatching { core.openStore(config, files.home.path, hostname, files.listCache.path) }
+                    .getOrElse { err ->
+                        fail(err.rethrowCancellation())
+                        return@launch
+                    }
             store = opened
-            actions = ItemActions(opened, targets.clipboard, targets.downloads)
+            actions = ItemActions(opened, targets.clipboard, targets.downloads, targets.io)
             _state.update { it.copy(connection = Connection.Ready(opened.description)) }
             open(opened)
+            keyWarning(core, files, hostname, config, targets.now())?.let {
+                    warning ->
+                update { it.withStatus(warning) }
+            }
         }
     }
 
-    private fun fail(err: CoreException) {
-        _state.update {
-            it.copy(connection = Connection.Failed(err.message.orEmpty(), err.kind), busy = false)
-        }
+    /**
+     * Forgets the store and the list and connects again: after the device was set up again, the
+     * config may name another server, and nothing of the old one may be shown or acted on.
+     */
+    fun reconnect() {
+        store = null
+        actions = null
+        _state.value = ChooseState()
+        connect()
+    }
+
+    private fun fail(err: Throwable) {
+        val kind = (err as? CoreException)?.kind ?: CoreException.Kind.IO
+        _state.update { it.copy(connection = Connection.Failed(err.describe(), kind), busy = false) }
     }
 
     /** The list from a usable cache, whose age the status shows, or else from the store. */
     private suspend fun open(store: StoreHandle) {
-        val cached = store.cached()
+        val cached = withContext(targets.io) { store.cached() }
         if (cached != null) {
             update { it.replace(cached.items).withStatus("cached ${cached.ageSecs} s ago") }
             _state.update { it.copy(busy = false) }
             return
         }
         update { it.withStatus("Loading...") }
-        try {
+        attempt(onFailure = { failure -> update { it.withStatus("cannot load: $failure") } }) {
             val items = store.list(true)
             update { it.replace(items).clearStatus() }
-        } catch (err: CoreException) {
-            update { it.withStatus("cannot load: ${err.message}") }
         }
         _state.update { it.copy(busy = false) }
     }
 
-    /** Handles one event, as a key press in the TUI. Events wait while the store is busy. */
+    /**
+     * Handles one event, as a key press in the TUI. While the store is being read or changed,
+     * events are dropped, as the TUI's keys wait: a touch during a load does nothing.
+     */
     fun on(event: PickerEvent) {
         if (_state.value.busy) return
         val step = _state.value.picker.handle(event)
@@ -148,13 +178,14 @@ class ChooseController(
         val item = _state.value.picker.items.firstOrNull { it.id == outcome.id } ?: return
         val actions = actions ?: return
         busy {
-            try {
+            attempt(onFailure = {
+                    failure ->
+                update { it.withStatus("cannot ${verb(outcome.action)} ${item.id}: $failure") }
+            }) {
                 when (outcome.action) {
                     Action.LOAD -> _state.update { it.copy(message = loadedMessage(item, actions.load(item))) }
                     Action.CAT -> _state.update { it.copy(viewer = Viewer(item, actions.cat(item))) }
                 }
-            } catch (err: CoreException) {
-                update { it.withStatus("cannot ${verb(outcome.action)} ${item.id}: ${err.message}") }
             }
         }
     }
@@ -163,11 +194,9 @@ class ChooseController(
         store: StoreHandle,
         id: String,
     ) {
-        try {
+        attempt(onFailure = { failure -> update { it.withStatus("cannot read $id: $failure") } }) {
             val meta = store.getMeta(id)
-            update { it.showDetails(meta.id, Formats.metaLines(meta, zone)) }
-        } catch (err: CoreException) {
-            update { it.withStatus("cannot read $id: ${err.message}") }
+            update { it.showDetails(meta.id, Formats.metaLines(meta, targets.zone)) }
         }
     }
 
@@ -176,12 +205,11 @@ class ChooseController(
         id: String,
     ) {
         update { it.withStatus("Deleting $id...") }
-        try {
-            store.delete(id)
-        } catch (err: CoreException) {
-            update { it.withStatus("cannot delete $id: ${err.message}") }
-            return
-        }
+        val deleted =
+            attempt(onFailure = { failure -> update { it.withStatus("cannot delete $id: $failure") } }) {
+                store.delete(id)
+            }
+        if (deleted == null) return
         if (reload(store, reuse = true, prefix = null) != null) {
             update { it.withStatus("deleted $id") }
         }
@@ -189,7 +217,7 @@ class ChooseController(
 
     /** `r`: the cache when it is fresh, otherwise the store. */
     private suspend fun reloadCached(store: StoreHandle) {
-        val cached = store.cached()
+        val cached = withContext(targets.io) { store.cached() }
         if (cached != null) {
             update {
                 it.replace(
@@ -212,24 +240,25 @@ class ChooseController(
         prefix: String?,
     ): Int? {
         update { it.withStatus("Reloading...") }
-        return try {
+        return attempt(onFailure = { failure -> update { it.withStatus("cannot reload: $failure") } }) {
             val items = store.list(reuse)
             update { picker ->
                 val replaced = picker.replace(items)
                 if (prefix != null) replaced.withStatus("$prefix${items.size} items") else replaced
             }
             items.size
-        } catch (err: CoreException) {
-            update { it.withStatus("cannot reload: ${err.message}") }
-            null
         }
     }
 
+    /**
+     * Runs [block] with the store marked busy. A failure that escaped its own handling still
+     * lands in the status line rather than ending the process.
+     */
     private fun busy(block: suspend () -> Unit) {
         _state.update { it.copy(busy = true) }
         scope.launch {
             try {
-                block()
+                attempt(onFailure = { failure -> update { it.withStatus("failed: $failure") } }, block)
             } finally {
                 _state.update { it.copy(busy = false) }
             }
@@ -253,3 +282,36 @@ private fun loadedMessage(
         Loaded.Clipboard -> "${item.id} copied to the clipboard"
         is Loaded.Downloaded -> "${loaded.name} saved to Downloads"
     }
+
+/**
+ * Runs [block] and returns its result, or null after handing a failure's description to
+ * [onFailure]: the core's message, or a device failure's. Cancellation passes through.
+ */
+private suspend fun <T> attempt(
+    onFailure: (String) -> Unit,
+    block: suspend () -> T,
+): T? =
+    runCatching { block() }.getOrElse { err ->
+        onFailure(err.rethrowCancellation().describe())
+        null
+    }
+
+private fun noConfig() = CoreException(CoreException.Kind.CONFIG, "no config file: set up this device first")
+
+/**
+ * With a passalong-server, one more request, `getViewer`, as `check` makes: the status line's
+ * warning when the API key has expired or expires within [Formats.EXPIRY_WARNING_DAYS], else
+ * null. A failure here changes nothing: the store is open.
+ */
+private suspend fun keyWarning(
+    core: Core,
+    files: AppFiles,
+    hostname: String,
+    config: String,
+    now: Instant,
+): String? {
+    val kind = runCatching { core.validateConfig(config, files.home.path, hostname).serverKind }.getOrNull()
+    if (kind != "https") return null
+    val info = runCatching { core.inspectServer(config, files.home.path, hostname, null) }.getOrNull() ?: return null
+    return if (Formats.keyExpiresSoon(info, now)) "API key ${Formats.keySummary(info, now)}" else null
+}

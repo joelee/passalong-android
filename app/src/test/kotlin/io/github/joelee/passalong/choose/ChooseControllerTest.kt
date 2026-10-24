@@ -10,6 +10,7 @@ import io.github.joelee.passalong.support.FakeCore
 import io.github.joelee.passalong.support.FakeDownloads
 import io.github.joelee.passalong.support.FakeStore
 import io.github.joelee.passalong.support.Samples
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -23,6 +24,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.IOException
+import java.time.Duration
+import java.time.Instant
 import java.time.ZoneOffset
 
 /** Mirrors the TUI's `run_picker` tests: the statuses each step shows. */
@@ -49,9 +53,9 @@ class ChooseControllerTest {
         files = AppFiles(temp.newFolder())
         store.downloadDir = files.home.resolve("Downloads")
         if (withConfig) files.writeConfig("[server]\nkind = \"ssh\"\n")
-        val targets = ActionTargets(clipboard, downloads)
+        val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined, ZoneOffset.UTC)
         store.onCall = { statuses += current.state.value.picker.status }
-        current = ChooseController(this, core, files, "pixel", targets, ZoneOffset.UTC)
+        current = ChooseController(this, core, files, "pixel", targets)
         backgroundScope.launch { current.state.toList(mutableListOf()) }
         current.connect()
         return current
@@ -242,5 +246,111 @@ class ChooseControllerTest {
             assertFalse(controller.state.value.busy)
             controller.on(PickerEvent.Help)
             assertEquals(Mode.Help, controller.state.value.picker.mode)
+        }
+
+    @Test
+    fun `a failed publish is shown in the status line and the list stays open`() =
+        runUnconfined {
+            val file = Samples.file("report.pdf", 3, secondsAfterT0 = 10)
+            store.items += file
+            val controller = controller()
+            downloads.fail = IOException("cannot create report.pdf in Downloads")
+            controller.on(PickerEvent.Select(0))
+            controller.on(PickerEvent.Load)
+            assertEquals(
+                "cannot load ${file.id}: cannot create report.pdf in Downloads",
+                controller.state.value.picker.status,
+            )
+            assertNull(controller.state.value.message)
+            assertFalse(controller.state.value.busy)
+            assertEquals(3, controller.state.value.picker.total)
+            // A failure that is not the core's in any other action lands there too.
+            store.failMeta = IllegalStateException("boom")
+            controller.on(PickerEvent.Details)
+            assertEquals("cannot read ${file.id}: boom", controller.state.value.picker.status)
+            store.failMeta = null
+            store.failList = IOException("disk")
+            controller.on(PickerEvent.ReloadServer)
+            assertEquals("cannot reload: disk", controller.state.value.picker.status)
+            assertFalse(controller.state.value.busy)
+        }
+
+    @Test
+    fun `reconnecting after setup shows the new server and forgets the old list`() =
+        runUnconfined {
+            val controller = controller()
+            controller.on(PickerEvent.StartFilter)
+            controller.on(PickerEvent.FilterChanged("new"))
+            assertEquals(1, controller.state.value.picker.visible.size)
+            val other = FakeStore(Samples.texts("one", "two", "three"))
+            other.downloadDir = files.home.resolve("Downloads")
+            core.store = other
+            files.writeConfig("[server]\nkind = \"https\"\n")
+            controller.reconnect()
+            assertEquals(Connection.Ready(other.description), controller.state.value.connection)
+            assertEquals(3, controller.state.value.picker.total)
+            assertEquals("the filter is cleared", "", controller.state.value.picker.filter)
+            assertNull(controller.state.value.viewer)
+            assertFalse(controller.state.value.busy)
+            assertEquals(listOf("cached", "list(true)"), other.calls)
+        }
+
+    @Test
+    fun `a config that cannot be read is reported, not thrown`() =
+        runUnconfined {
+            files = AppFiles(temp.newFolder())
+            files.writeConfig("[server]\nkind = \"ssh\"\n")
+            assertTrue("cannot run as root: the test needs an unreadable file", files.config.setReadable(false))
+            val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined, ZoneOffset.UTC)
+            current = ChooseController(this, core, files, "pixel", targets)
+            current.connect()
+            val failed = current.state.value.connection as Connection.Failed
+            assertEquals(CoreException.Kind.IO, failed.kind)
+            assertTrue(failed.message, failed.message.contains("config.toml"))
+            assertFalse(current.state.value.busy)
+        }
+
+    @Test
+    fun `over a server, a key that expires soon is warned about and a refused key needs setup`() =
+        runUnconfined {
+            files = AppFiles(temp.newFolder())
+            store.downloadDir = files.home.resolve("Downloads")
+            files.writeConfig("[server]\nkind = \"https\"\n[server.https]\nurl = \"https://box:8443\"\n")
+            val now = Instant.parse("2026-09-25T00:00:00Z")
+            val inAWeek = now.plus(Duration.ofDays(7)).plusSeconds(60).epochSecond
+            core.serverInfo = core.serverInfo.copy(keyExpiresAt = inAWeek)
+            val targets = ActionTargets(clipboard, downloads, Dispatchers.Unconfined, ZoneOffset.UTC, now = { now })
+            current = ChooseController(this, core, files, "pixel", targets)
+            current.connect()
+            assertEquals(Connection.Ready(store.description), current.state.value.connection)
+            assertEquals(2, current.state.value.picker.total)
+            assertEquals(
+                "API key phone (read-write), expires 2026-10-02, in 7 days: ask the server's operator for a new key",
+                current.state.value.picker.status,
+            )
+            assertEquals("inspectServer(saved)", core.calls.last())
+            // A key with time left says nothing; a failed viewer request changes nothing.
+            core.serverInfo = core.serverInfo.copy(keyExpiresAt = null)
+            current.reconnect()
+            assertNull(current.state.value.picker.status)
+            core.failInspect = CoreException(CoreException.Kind.CONNECT, "dropped")
+            current.reconnect()
+            assertEquals(Connection.Ready(store.description), current.state.value.connection)
+            assertNull(current.state.value.picker.status)
+            // A refused device: the connection fails with the server's reason.
+            val refused = "the server refused (KEY_REVOKED): ask the operator"
+            core.failOpen = CoreException(CoreException.Kind.DENIED, refused)
+            current.reconnect()
+            assertEquals(
+                Connection.Failed(refused, CoreException.Kind.DENIED),
+                current.state.value.connection,
+            )
+        }
+
+    @Test
+    fun `over ssh no viewer request is made`() =
+        runUnconfined {
+            controller()
+            assertFalse(core.calls.any { it.startsWith("inspectServer") })
         }
 }

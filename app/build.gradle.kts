@@ -16,8 +16,9 @@ android {
         // 29: MediaStore Downloads without a storage permission.
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -26,6 +27,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Kept for when shrinking is turned on: the verifier's classes
+            // are reached only through JNI.
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
@@ -68,6 +72,39 @@ tasks.named("preBuild") {
 tasks.matching { it.name.contains("ktlint", ignoreCase = true) || it.name.contains("detekt", ignoreCase = true) }
     .configureEach { mustRunAfter(buildRust) }
 
+/**
+ * The version of `rustls-platform-verifier-android` in the bridge's lock file: the Kotlin
+ * component must match the Rust crate exactly, and cargo is what keeps them in step.
+ */
+abstract class RustlsPlatformVerifierVersion : ValueSource<String, RustlsPlatformVerifierVersion.Params> {
+    interface Params : ValueSourceParameters {
+        val lockFile: RegularFileProperty
+    }
+
+    override fun obtain(): String {
+        val lines = parameters.lockFile.get().asFile.readLines()
+        val at = lines.indexOfFirst { it.trim() == "name = \"rustls-platform-verifier-android\"" }
+        return lines.drop(at + 1).takeIf { at >= 0 }
+            ?.firstOrNull { it.trimStart().startsWith("version = ") }
+            ?.substringAfter('"', "")?.substringBefore('"', "")?.takeIf { it.isNotEmpty() }
+            ?: error("rustls-platform-verifier-android is not in rust/Cargo.lock")
+    }
+}
+
+val rustlsPlatformVerifierVersion =
+    providers.of(RustlsPlatformVerifierVersion::class.java) {
+        parameters.lockFile.set(rootProject.layout.projectDirectory.file("rust/Cargo.lock"))
+    }
+
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.rustls" && requested.name == "rustls-platform-verifier") {
+            useVersion(rustlsPlatformVerifierVersion.get())
+            because("the Kotlin component must be the version of the rustls-platform-verifier-android crate")
+        }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -92,8 +129,14 @@ dependencies {
             type = "aar"
         }
     }
+    // The Kotlin half of the TLS verifier that trusts Android's certificate
+    // store; the Rust half calls into it (rust/src/android_tls.rs).
+    implementation(libs.rustls.platform.verifier)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Instrumented tests, on a device or emulator: `just test-android`.
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }
 
 ktlint {

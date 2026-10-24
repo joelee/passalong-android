@@ -9,6 +9,8 @@
 
 uniffi::setup_scaffolding!();
 
+#[cfg(target_os = "android")]
+mod android_tls;
 mod env;
 mod error;
 mod logging;
@@ -21,7 +23,9 @@ pub use error::PassalongError;
 pub use logging::init_logging;
 pub use model::{Item, kind_label};
 pub use setup::{
-    ConfigSummary, HostKey, SetupAnswers, fetch_host_key, generate_identity, render_config,
+    ConfigSummary, HostKey, HttpsSetupAnswers, PresentedCertificate, ServerInfo, SetupAnswers,
+    device_has_store_key, fetch_host_key, generate_identity, has_api_key, inspect_server,
+    parse_api_key, parse_tls_pin, probe_server, render_config, render_https_config, save_api_key,
     validate_config,
 };
 pub use store::{CachedItems, PassalongStore, open_store};
@@ -42,8 +46,9 @@ pub fn bridge_version() -> String {
 mod tests {
     #[test]
     fn versions_are_the_pinned_ones() {
-        assert_eq!(super::core_version(), "0.2.0");
+        assert_eq!(super::core_version(), "0.3.0");
         assert_eq!(super::core_version(), passalong_ssh::VERSION);
+        assert_eq!(super::core_version(), passalong_https::VERSION);
         assert_eq!(super::bridge_version(), env!("CARGO_PKG_VERSION"));
     }
 }

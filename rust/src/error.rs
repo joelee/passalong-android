@@ -23,6 +23,10 @@ pub enum PassalongError {
     /// encryption is in a state that needs `passalong encrypt`.
     #[error("{0}")]
     Encryption(String),
+    /// A passalong-server refused this device for good: its API key is
+    /// wrong, expired, or revoked. Only a new key from the operator helps.
+    #[error("{0}")]
+    Denied(String),
     /// Any other storage problem, including an item that fails its SHA-256
     /// check.
     #[error("{0}")]
@@ -41,8 +45,15 @@ impl From<StoreError> for PassalongError {
             }
             StoreError::Encryption(_) => Self::Encryption(err.to_string()),
             StoreError::Backend(_) => Self::Connect(err.to_string()),
+            StoreError::Denied(_) => Self::Denied(err.to_string()),
             _ => Self::Store(err.to_string()),
         }
+    }
+}
+
+impl From<passalong_https::HttpsError> for PassalongError {
+    fn from(err: passalong_https::HttpsError) -> Self {
+        Self::from(passalong_https::store_error(err))
     }
 }
 
@@ -87,11 +98,12 @@ mod tests {
 
     #[test]
     fn store_errors_are_grouped_by_what_the_app_can_do() {
-        let cases: [(StoreError, Wrap); 5] = [
+        let cases: [(StoreError, Wrap); 6] = [
             (
                 StoreError::NotFound("abcd".into()),
                 PassalongError::NotFound,
             ),
+            (StoreError::Denied("revoked".into()), PassalongError::Denied),
             (StoreError::Config("x".into()), PassalongError::Config),
             (
                 StoreError::UnsupportedBackend("s3".into()),

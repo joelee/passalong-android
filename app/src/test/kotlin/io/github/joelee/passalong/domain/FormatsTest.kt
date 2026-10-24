@@ -1,8 +1,13 @@
 package io.github.joelee.passalong.domain
 
+import io.github.joelee.passalong.support.FakeCore
 import io.github.joelee.passalong.support.Samples
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Duration
+import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 
@@ -32,6 +37,37 @@ class FormatsTest {
         assertEquals("2026-09-12 11:53", Formats.listTime(Samples.T0, ZoneOffset.ofHours(2)))
         val item = Samples.file("report.pdf", 1536)
         assertEquals("file  ·  1.5 KiB  ·  laptop  ·  2026-09-12 09:53", Formats.rowDetails(item, utc))
+    }
+
+    @Test
+    fun `the key summary reads as passalong check prints it`() {
+        val now = Instant.parse("2026-09-25T00:00:00Z")
+        val info = FakeCore().serverInfo
+        assertEquals("phone (read-write), never expires", Formats.keySummary(info, now))
+        assertFalse(Formats.keyExpiresSoon(info, now))
+        val at = { days: Long -> now.plus(Duration.ofDays(days)).plusSeconds(60).epochSecond }
+        assertEquals(
+            "phone (read-write), expires 2026-12-24",
+            Formats.keySummary(info.copy(keyExpiresAt = at(90)), now),
+        )
+        assertEquals(
+            "phone (read-write), expires 2026-10-02, in 7 days: ask the server's operator for a new key",
+            Formats.keySummary(info.copy(keyExpiresAt = at(7)), now),
+        )
+        assertTrue(Formats.keyExpiresSoon(info.copy(keyExpiresAt = at(7)), now))
+        assertEquals(
+            "phone (read-write), expires 2026-09-26, in 1 day: ask the server's operator for a new key",
+            Formats.keySummary(info.copy(keyExpiresAt = at(1)), now),
+        )
+        assertEquals(
+            "phone (read-write), expires 2026-09-25, within a day: ask the server's operator for a new key",
+            Formats.keySummary(info.copy(keyExpiresAt = at(0)), now),
+        )
+        assertEquals(
+            "0123abcd (read-only), expired 2026-09-24",
+            Formats.keySummary(info.copy(keyLabel = null, keyRole = "read-only", keyExpiresAt = at(-1)), now),
+        )
+        assertTrue(Formats.keyExpiresSoon(info.copy(keyExpiresAt = at(-1)), now))
     }
 
     @Test

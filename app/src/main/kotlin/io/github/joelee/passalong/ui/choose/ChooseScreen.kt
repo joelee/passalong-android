@@ -61,6 +61,7 @@ import io.github.joelee.passalong.choose.ChooseController
 import io.github.joelee.passalong.choose.ChooseState
 import io.github.joelee.passalong.choose.Connection
 import io.github.joelee.passalong.choose.Viewer
+import io.github.joelee.passalong.core.CoreException
 import io.github.joelee.passalong.domain.Formats
 import io.github.joelee.passalong.domain.Item
 import io.github.joelee.passalong.domain.Mode
@@ -294,10 +295,19 @@ private fun ConnectionFailed(
         Spacer(Modifier.height(8.dp))
         Text(failed.message, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
-        Row {
-            Button(onClick = onRetry) { Text("Try again") }
-            Spacer(Modifier.padding(8.dp))
-            OutlinedButton(onClick = onSetup) { Text("Set up again") }
+        // A device the server refused for good needs a new key, which only setup can take.
+        if (failed.kind == CoreException.Kind.DENIED) {
+            Row {
+                Button(onClick = onSetup) { Text("Set up again") }
+                Spacer(Modifier.padding(8.dp))
+                OutlinedButton(onClick = onRetry) { Text("Try again") }
+            }
+        } else {
+            Row {
+                Button(onClick = onRetry) { Text("Try again") }
+                Spacer(Modifier.padding(8.dp))
+                OutlinedButton(onClick = onSetup) { Text("Set up again") }
+            }
         }
     }
 }

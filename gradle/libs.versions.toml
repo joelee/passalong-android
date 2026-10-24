@@ -11,6 +11,8 @@ jna = "5.14.0"
 ktlintGradle = "12.3.0"
 detekt = "1.23.8"
 kover = "0.9.2"
+androidxTestJunit = "1.2.1"
+androidxTestRunner = "1.6.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -26,7 +28,12 @@ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+# Unversioned: app/build.gradle.kts takes the version from rust/Cargo.lock, so it
+# always matches the Rust crate's.
+rustls-platform-verifier = { group = "org.rustls", name = "rustls-platform-verifier" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

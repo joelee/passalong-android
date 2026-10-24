@@ -12,6 +12,12 @@ data class HostKeyInfo(
     val algorithm: String,
 )
 
+/**
+ * The certificate a passalong-server presents, seen with a handshake that stops before any
+ * request: its public key's pin, `sha256/<base64>`, and whether the system trusts it.
+ */
+data class PresentedCertificate(val pin: String, val trusted: Boolean)
+
 /** The values the setup screen collects, as `passalong init` asks them. */
 data class SetupAnswers(
     val deviceName: String,
@@ -21,6 +27,38 @@ data class SetupAnswers(
     val hostKey: String,
     val identityFile: String,
     val remotePath: String,
+)
+
+/** The values the setup screen collects for a passalong-server, as `passalong init` asks them. */
+data class HttpsSetupAnswers(
+    val deviceName: String,
+    val url: String,
+    /** The confirmed pin, or null to trust the operating system's certificate authorities. */
+    val tlsPin: String?,
+    val apiKeyFile: String,
+)
+
+/**
+ * What a passalong-server says about itself, the API key in use, and the workspace that key
+ * opens, as `init` asks before writing anything and `check` reports.
+ */
+data class ServerInfo(
+    val serverVersion: String,
+    val apiVersion: Int,
+    val sourceUrl: String?,
+    val keyId: String,
+    val keyLabel: String?,
+    /** `read-write`, `read-only`, or `unknown`. */
+    val keyRole: String,
+    /** When the key expires, seconds since the Unix epoch; null for never. */
+    val keyExpiresAt: Long?,
+    val workspace: String,
+    val itemCount: Long,
+    val quotaBytes: Long,
+    val usedBytes: Long,
+    /** `plaintext`, `sealed`, `rewriting`, or `unknown`. */
+    val encryptionState: String,
+    val encryptionKeyId: String?,
 )
 
 /** What a valid config says. */
@@ -55,6 +93,9 @@ class CoreException(val kind: Kind, message: String) : Exception(message) {
         /** The store is encrypted and this device cannot open it. */
         ENCRYPTION,
 
+        /** A passalong-server refused this device for good: its API key is wrong, expired, or revoked. */
+        DENIED,
+
         /** Any other storage problem. */
         STORE,
 
@@ -64,10 +105,55 @@ class CoreException(val kind: Kind, message: String) : Exception(message) {
 }
 
 /**
+ * What setting up a passalong-server needs from the core, as `init`'s https flow calls it. Every
+ * function may throw [CoreException].
+ */
+interface ServerSetup {
+    /** Fetches the certificate the passalong-server at [url] presents, without sending a request. */
+    suspend fun probeServer(url: String): PresentedCertificate
+
+    /** Reads a pin in either written form and returns it canonical, `sha256/<base64>`. */
+    fun parseTlsPin(text: String): String
+
+    /** Checks the shape of an API key, `pal_<id>_<secret>`, and returns its public id. */
+    fun parseApiKey(text: String): String
+
+    /** Whether an API key is saved at [path]. */
+    fun hasApiKey(path: String): Boolean
+
+    /** Saves the API key at [path], readable by the app alone. */
+    fun saveApiKey(
+        path: String,
+        key: String,
+    )
+
+    /** Renders the config file `passalong init` writes for a passalong-server. */
+    fun renderHttpsConfig(answers: HttpsSetupAnswers): String
+
+    /**
+     * Asks the server the config names about the key and the workspace, with [apiKey] as typed or
+     * the saved one; nothing is written.
+     */
+    suspend fun inspectServer(
+        configToml: String,
+        home: String,
+        hostname: String,
+        apiKey: String?,
+    ): ServerInfo
+
+    /** Whether this device holds a store key, so a "not encrypted" claim needs no confirmation. */
+    fun deviceHasStoreKey(
+        configToml: String,
+        home: String,
+        hostname: String,
+    ): Boolean
+}
+
+/**
  * The passalong core as the app uses it. [io.github.joelee.passalong.android.FfiCore] is the real
  * one over the Rust bridge; tests use a fake. Every function may throw [CoreException].
  */
-interface Core {
+interface Core : ServerSetup {
     /** The version of the passalong core. */
     fun coreVersion(): String
 

@@ -38,6 +38,14 @@ test:
     {{gradle}} testDebugUnitTest
     cargo test --manifest-path rust/Cargo.toml --all-features
 
+# The bridge against a real passalong-server: PASSALONG_SERVER_BIN names the
+# binary (docs/developer-guide.md); each test starts its own server
+test-https:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${PASSALONG_SERVER_BIN:?set PASSALONG_SERVER_BIN to a passalong-server binary; see docs/developer-guide.md}"
+    cargo test --manifest-path rust/Cargo.toml --all-features --test server -- --ignored
+
 # Kotlin line coverage gate (>= 80 %, Kover) with the figure printed
 coverage:
     {{gradle}} koverLog koverVerify
@@ -54,9 +62,16 @@ rust:
 install:
     {{gradle}} installDebug
 
-# Instrumented tests on the connected device or emulator
-test-android:
-    {{gradle}} connectedDebugAndroidTest
+# Instrumented tests on the connected device or emulator; `server` and `pin`
+# name a self-signed passalong-server to probe, and with `key` and `text`
+# (an API key, and the text of an item the CLI put there) the whole
+# setup-then-choose flow runs against it (docs/developer-guide.md)
+test-android server="" pin="" key="" text="":
+    {{gradle}} connectedDebugAndroidTest \
+        -Pandroid.testInstrumentationRunnerArguments.server="{{server}}" \
+        -Pandroid.testInstrumentationRunnerArguments.pin="{{pin}}" \
+        -Pandroid.testInstrumentationRunnerArguments.key="{{key}}" \
+        -Pandroid.testInstrumentationRunnerArguments.text="{{text}}"
 
 # Every mandated check: format, lint, tests, coverage, build
 check: fmt-check lint test coverage build
